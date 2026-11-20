@@ -68,6 +68,16 @@ if (!patched.includes('"zrhp"')) {
     throw new Error("could not add zrhp to the adapter enum of settings.schema.json");
 }
 fs.writeFileSync(schemaPath, patched);
+// 3. the adapter type unions in Zigbee2MQTT's TypeScript (lib/types/api.ts: `adapter?: "deconz" | … | "zoh"`)
+const walk = (dir) => fs.readdirSync(dir, {withFileTypes: true}).flatMap((e) => (e.isDirectory() ? walk(`${dir}/${e.name}`) : [`${dir}/${e.name}`]));
+for (const file of walk("lib").filter((f) => f.endsWith(".ts"))) {
+    const src = fs.readFileSync(file, "utf8");
+    const out = src.replace(/(adapter\??:[^;\n]*"zoh")(?![^;\n]*"zrhp")/g, '$1 | "zrhp"');
+    if (out !== src) {
+        fs.writeFileSync(file, out);
+        console.log(`    patched adapter type in ${file}`);
+    }
+}
 EOF
 
 $PNPM install --no-frozen-lockfile
