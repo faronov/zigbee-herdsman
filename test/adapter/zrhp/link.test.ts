@@ -190,7 +190,7 @@ describe("ZRHP ARQ traces (arq_scenarios.json)", () => {
         expect(ARQ.scenarios.length).toStrictEqual(8);
     });
 
-    it.each(ARQ.scenarios.map((s: Json) => [s.name, s]))("%s", (_name, sc: Json) => {
+    it.each<[string, Json]>(ARQ.scenarios.map((s: Json): [string, Json] => [s.name, s]))("%s", (_name, sc: Json) => {
         (sc.role === "receiver" ? runReceiver : runSender)(sc);
     });
 });

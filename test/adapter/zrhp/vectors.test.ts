@@ -156,7 +156,7 @@ function typedPayload(name: string): Buffer | undefined {
 describe("ZRHP vectors: link_frames.json", () => {
     const data = loadVector("link_frames.json");
 
-    it.each(data.vectors.map((v: Json) => [v.name, v]))("%s", (name, v: Json) => {
+    it.each<[string, Json]>(data.vectors.map((v: Json): [string, Json] => [v.name, v]))("%s", (name, v: Json) => {
         const payload = hex(v.payload_hex);
         const typed = typedPayload(name as string);
 
@@ -480,7 +480,7 @@ describe("ZRHP vectors: messages.json", () => {
         expect(vectors.length).toStrictEqual(34);
     });
 
-    it.each(vectors.map((v: Json) => [v.name, v]))("%s", (name, v: Json) => {
+    it.each<[string, Json]>(vectors.map((v: Json): [string, Json] => [v.name, v]))("%s", (name, v: Json) => {
         const payload = hex(v.payload_hex);
         const kind = v.kind as Kind;
         const msgId = Number.parseInt(v.msg_id, 16);

@@ -46,6 +46,7 @@ if [[ ! -d "$DEST/.git" ]]; then
 fi
 mkdir -p "$DEST/.zrhp"
 cp "$TGZ" "$DEST/.zrhp/zigbee-herdsman.tgz"
+cp "$(dirname "${BASH_SOURCE[0]}")/probe.js" "$DEST/.zrhp/probe.js" 2>/dev/null || cp "$HERDSMAN/scripts/zrhp/probe.js" "$DEST/.zrhp/probe.js"
 cd "$DEST"
 
 # 1. every zigbee-herdsman in the tree (Zigbee2MQTT's and zigbee-herdsman-converters') becomes the fork
@@ -78,4 +79,6 @@ const zrhp = main.replace(/index\.js$/, "adapter/zrhp/adapter/zrhpAdapter.js");
 if (!fs.existsSync(zrhp)) { console.error("zigbee-herdsman in this tree has no ZRHP adapter"); process.exit(1); }
 console.log(`    Zigbee2MQTT ${require("./package.json").version} with zigbee-herdsman ${require("zigbee-herdsman/package.json").version} (ZRHP adapter present)`);
 '
-echo "==> done. Start with:  cd $DEST && ZIGBEE2MQTT_DATA=/path/to/data node index.js"
+echo "==> done."
+echo "    Check the NCP:  cd $DEST && node .zrhp/probe.js /dev/ttyACM0"
+echo "    Start:          cd $DEST && ZIGBEE2MQTT_DATA=/path/to/data node index.js"

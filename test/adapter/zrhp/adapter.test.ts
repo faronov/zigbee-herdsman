@@ -13,9 +13,10 @@ import {RecordType} from "../../../src/adapter/zrhp/records";
 import {SidecarStore} from "../../../src/adapter/zrhp/store";
 import {BackupUtils} from "../../../src/utils";
 import * as ZSpec from "../../../src/zspec";
+import type {Eui64} from "../../../src/zspec/tstypes";
 import * as Zcl from "../../../src/zspec/zcl";
 import * as Zdo from "../../../src/zspec/zdo";
-import {MOCK_IEEE, MockNcp, MockPort} from "./mockNcp";
+import {MockNcp, MockPort} from "./mockNcp";
 
 const KEY = [1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 13];
 const EPID = [0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0x02];
@@ -309,7 +310,7 @@ describe("ZRHP adapter against a scriptable NCP", () => {
             DEV_IEEE,
             ZSpec.BroadcastAddress.RX_ON_WHEN_IDLE,
             Zdo.ClusterId.NETWORK_ADDRESS_REQUEST,
-            Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.NETWORK_ADDRESS_REQUEST, DEV_IEEE as ZSpec.Eui64, false, 0),
+            Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.NETWORK_ADDRESS_REQUEST, DEV_IEEE as Eui64, false, 0),
             false,
         );
         expect(nwk[1]?.nwkAddress).toStrictEqual(0x1234);
@@ -325,7 +326,7 @@ describe("ZRHP adapter against a scriptable NCP", () => {
             DEV_IEEE,
             0x1234,
             Zdo.ClusterId.LEAVE_REQUEST,
-            Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.LEAVE_REQUEST, DEV_IEEE as ZSpec.Eui64, Zdo.LeaveRequestFlags.WITHOUT_REJOIN),
+            Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.LEAVE_REQUEST, DEV_IEEE as Eui64, Zdo.LeaveRequestFlags.WITHOUT_REJOIN),
             true,
         );
     });
@@ -404,7 +405,7 @@ describe("ZRHP adapter against a scriptable NCP", () => {
             coord,
             0,
             Zdo.ClusterId.BIND_REQUEST,
-            Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.BIND_REQUEST, coord as ZSpec.Eui64, 1, 6, Zdo.UNICAST_BINDING, coord as ZSpec.Eui64, 0, 1),
+            Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.BIND_REQUEST, coord as Eui64, 1, 6, Zdo.UNICAST_BINDING, coord as Eui64, 0, 1),
             false,
         );
         expect(bind[0]).toStrictEqual(Zdo.Status.NOT_SUPPORTED);

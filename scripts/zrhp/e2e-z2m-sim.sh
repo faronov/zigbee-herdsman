@@ -44,6 +44,17 @@ advanced:
   ext_pan_id: GENERATE
 EOF
 
+# 1. the probe (read-only) on its own simulator instance
+socat -d "PTY,link=$DATA/ttyProbe,raw,echo=0,wait-slave,mode=666" "EXEC:$SIM,stderr" 2>"$DATA/probe_sim.log" &
+PIDS+=($!)
+for _ in $(seq 50); do [[ -e "$DATA/ttyProbe" ]] && break; sleep 0.1; done
+if [[ "$MODE" == docker:* ]]; then
+    docker run --rm --privileged -v /dev/pts:/dev/pts -v "$DATA:/app/data" "${MODE#docker:}" node .zrhp/probe.js /app/data/ttyProbe
+else
+    (cd "${MODE#dir:}" && node .zrhp/probe.js "$DATA/ttyProbe")
+fi
+
+# 2. Zigbee2MQTT
 socat -d "PTY,link=$DATA/ttyZRHP,raw,echo=0,wait-slave,mode=666" "EXEC:$SIM,stderr" 2>"$DATA/ncp_sim.log" &
 PIDS+=($!)
 for _ in $(seq 50); do [[ -e "$DATA/ttyZRHP" ]] && break; sleep 0.1; done

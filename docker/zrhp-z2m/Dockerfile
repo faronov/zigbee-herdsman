@@ -11,14 +11,14 @@ RUN apk add --no-cache bash git make gcc g++ python3 linux-headers
 ARG Z2M_REF=2.14.3
 ARG HERDSMAN_REPO=https://github.com/faronov/zigbee-herdsman.git
 ARG HERDSMAN_REF=zrhp
-COPY scripts/zrhp/build-z2m.sh /build-z2m.sh
+COPY scripts/zrhp/build-z2m.sh scripts/zrhp/probe.js /
 RUN Z2M_REF="$Z2M_REF" HERDSMAN_REPO="$HERDSMAN_REPO" HERDSMAN_REF="$HERDSMAN_REF" bash /build-z2m.sh /app && \
     cd /app && \
     # musl: build the serial port binding for this image instead of using prebuilds
     rm -rf $(find ./node_modules/.pnpm/ -wholename "*/@serialport/bindings-cpp/prebuilds" -type d) && \
     CI=true corepack pnpm rebuild @serialport/bindings-cpp && \
     CI=true corepack pnpm prune --prod && \
-    rm -rf .git .zrhp/*.tgz.lock
+    rm -rf .git
 
 FROM node:24-alpine AS release
 RUN apk add --no-cache tzdata eudev tini
