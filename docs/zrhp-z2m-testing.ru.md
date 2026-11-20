@@ -62,8 +62,8 @@ Debian/Ubuntu, `uucp` в Arch).
 
 1. Откройте <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml> (для скачивания
    артефактов нужно войти в GitHub).
-2. Откройте последний зелёный запуск с именем **«NCP images from ncp-host-gaps»** (прошивка со сменой канала, группами
-   координатора и картой сети; после слияния этой ветки берите последний «NCP images from master») и скачайте артефакт
+2. Откройте последний зелёный (✓) запуск **«NCP release artifacts»** на ветке **`master`** (zigbee-rs `c18875b` или
+   новее: смена канала, группы координатора и карта сети; коммит указан в `FLASHING.txt`) и скачайте артефакт
    **`zrhp-ncp-images`** (или только `zrhp-ncp-h2-usj` / `zrhp-ncp-c6-usj`). Распакуйте.
 
 В папке каждого образа:
@@ -84,7 +84,7 @@ Debian/Ubuntu, `uucp` в Arch).
 ```bash
 rustup toolchain install nightly-2026-08-01 --component rust-src --target riscv32imac-unknown-none-elf
 cargo install espflash@4.5.0
-git clone -b ncp-host-gaps https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
+git clone https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
 # ESP32-H2 (фичи по умолчанию esp32h2,transport-usj); для C6 добавьте: --no-default-features --features esp32c6,transport-usj
 cargo +nightly-2026-08-01 build --release --locked --bin esp32-ncp -Z build-std=core,alloc
 espflash save-image --chip esp32h2 --flash-size 4mb --merge \
@@ -270,9 +270,9 @@ Zigbee2MQTT started!
 
 ### Известные ограничения этой тестовой сборки
 
-- Прошивка старше `ncp-host-gaps` (например, запуск «NCP images from ncp-release-artifacts»/master до слияния) не умеет
-  менять канал (адаптер откажет с понятной ошибкой), не показывает связи координатора на карте сети и не хранит
-  группы координатора. Используйте образы `ncp-host-gaps`.
+- Прошивка старше master zigbee-rs `c18875b` (например, запуски на ветке `ncp-release-artifacts`) не умеет менять
+  канал (адаптер откажет с понятной ошибкой), не показывает связи координатора на карте сети и не хранит группы
+  координатора. Берите образ из `master`.
 - Мощность передатчика пока не настраивается (`transmit_power` NCP игнорирует).
 - Нет Touchlink / inter-PAN.
 - Install codes и Green Power в адаптере реализованы, но на железе не проверены.

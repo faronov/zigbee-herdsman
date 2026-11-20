@@ -62,8 +62,8 @@ The images are built by GitHub Actions in faronov/zigbee-rs (workflow "NCP relea
 
 1. Open <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml> (downloading artifacts needs
    a GitHub login).
-2. Open the latest green run named **"NCP images from ncp-host-gaps"** (the firmware with channel change, coordinator
-   groups and network map; once that branch is merged, take the latest "NCP images from master") and download the
+2. Open the latest green (✓) run of **"NCP release artifacts"** on branch **`master`** (zigbee-rs `c18875b` or newer:
+   channel change, coordinator groups and network map; `FLASHING.txt` names the commit) and download the
    artifact **`zrhp-ncp-images`** (or only `zrhp-ncp-h2-usj` / `zrhp-ncp-c6-usj`). Unzip it.
 
 Each image folder contains:
@@ -84,7 +84,7 @@ Check the download: `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c SHA256SU
 ```bash
 rustup toolchain install nightly-2026-08-01 --component rust-src --target riscv32imac-unknown-none-elf
 cargo install espflash@4.5.0
-git clone -b ncp-host-gaps https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
+git clone https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
 # ESP32-H2 (default features esp32h2,transport-usj); for the C6 add: --no-default-features --features esp32c6,transport-usj
 cargo +nightly-2026-08-01 build --release --locked --bin esp32-ncp -Z build-std=core,alloc
 espflash save-image --chip esp32h2 --flash-size 4mb --merge \
@@ -267,9 +267,9 @@ Please go through what you can and note for each step: time, what you did, what 
 
 ### Known limitations of this test build
 
-- Firmware older than `ncp-host-gaps` (e.g. a run "NCP images from ncp-release-artifacts"/master before the merge)
-  cannot change the channel (the adapter refuses with an explicit error), shows no coordinator links on the network
-  map and keeps no coordinator group memberships. Use the `ncp-host-gaps` images.
+- Firmware older than zigbee-rs master `c18875b` (e.g. runs on the branch `ncp-release-artifacts`) cannot change the
+  channel (the adapter refuses with an explicit error), shows no coordinator links on the network map and keeps no
+  coordinator group memberships. Use an image from `master`.
 - No transmit power setting yet (`transmit_power` is ignored by the NCP).
 - No Touchlink / inter-PAN.
 - Install codes and Green Power are implemented in the adapter but untested on hardware.

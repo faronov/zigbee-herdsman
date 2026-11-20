@@ -253,7 +253,7 @@ describe.runIf(NCP_SIM)("ZRHP adapter against the Rust NCP simulator", () => {
         const advertised = a.api.session?.capacity(Capacity.HOST_RESPONSE_BYTES);
 
         if (!advertised) {
-            // a simulator from before ncp-host-gaps
+            // a simulator from before zigbee-rs master c18875b (ncp-host-gaps)
             ctx.skip();
         }
 
