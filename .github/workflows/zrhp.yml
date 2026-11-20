@@ -1,0 +1,102 @@
+name: ZRHP
+
+# CI of the ZRHP adapter in this fork (src/adapter/zrhp): lint, build, the full test suite with the shared vectors and the
+# Rust NCP simulator of zigbee-rs, and an end-to-end Zigbee2MQTT run on the simulator (bare metal and Docker image).
+
+on:
+    push:
+        branches: [zrhp, "zrhp-*"]
+    pull_request:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+env:
+    ZIGBEE_RS_REPO: https://github.com/faronov/zigbee-rs.git
+    # master once the simulator is merged there; zrhp-ncp-sim before that
+    ZIGBEE_RS_REFS: "master zrhp-ncp-sim"
+    RUST_TOOLCHAIN: nightly-2026-03-23
+    Z2M_REF: 2.14.3
+
+jobs:
+    ncp-sim:
+        name: Build the Rust NCP simulator
+        runs-on: ubuntu-latest
+        steps:
+            - name: Check out zigbee-rs with examples/ncp_sim.rs
+              run: |
+                  git clone --quiet "$ZIGBEE_RS_REPO" zigbee-rs
+                  for ref in $ZIGBEE_RS_REFS; do
+                      git -C zigbee-rs checkout --quiet "origin/$ref" 2>/dev/null || continue
+                      if [ -f zigbee-rs/apps/ncp-coordinator/examples/ncp_sim.rs ]; then echo "zigbee-rs $ref $(git -C zigbee-rs rev-parse --short HEAD)"; break; fi
+                  done
+                  test -f zigbee-rs/apps/ncp-coordinator/examples/ncp_sim.rs
+            - uses: dtolnay/rust-toolchain@master
+              with:
+                  toolchain: ${{ env.RUST_TOOLCHAIN }}
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: zigbee-rs/apps/ncp-coordinator
+            - run: cargo build --manifest-path zigbee-rs/apps/ncp-coordinator/Cargo.toml --example ncp_sim --locked
+            - name: Collect the simulator and the shared vectors
+              run: |
+                  mkdir -p out/vectors
+                  cp zigbee-rs/apps/ncp-coordinator/target/debug/examples/ncp_sim out/
+                  cp zigbee-rs/docs/book/src/advanced/host-protocol-vectors/*.json out/vectors/
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: ncp-sim
+                  path: out/
+
+    test:
+        name: Check, build, test (with the Rust NCP)
+        needs: ncp-sim
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/download-artifact@v4
+              with:
+                  name: ncp-sim
+                  path: ncp-sim
+            - run: chmod +x ncp-sim/ncp_sim
+            - name: Shared vectors are byte-identical to zigbee-rs
+              run: diff -r ncp-sim/vectors test/adapter/zrhp/vectors
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm i --frozen-lockfile
+            - run: pnpm run check
+            - run: pnpm run build
+            - name: Test (coverage; the Rust simulator tests must run)
+              env:
+                  ZRHP_NCP_SIM: ${{ github.workspace }}/ncp-sim/ncp_sim
+                  ZRHP_REQUIRE_SIM: "1"
+              run: pnpm run test:coverage -- --testTimeout=10000
+
+    z2m-e2e:
+        name: Zigbee2MQTT on the Rust NCP (bare metal + Docker)
+        needs: [ncp-sim, test]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/download-artifact@v4
+              with:
+                  name: ncp-sim
+                  path: ncp-sim
+            - run: chmod +x ncp-sim/ncp_sim
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+            - run: corepack enable
+            - run: sudo apt-get update -qq && sudo apt-get install -y -qq socat mosquitto mosquitto-clients && sudo systemctl start mosquitto
+            - name: Build Zigbee2MQTT with this herdsman commit (scripts/zrhp/build-z2m.sh)
+              run: HERDSMAN_DIR="$PWD" Z2M_REF="$Z2M_REF" bash scripts/zrhp/build-z2m.sh "$RUNNER_TEMP/z2m"
+            - name: End to end (bare metal)
+              run: bash scripts/zrhp/e2e-z2m-sim.sh "dir:$RUNNER_TEMP/z2m" ncp-sim/ncp_sim
+            - name: Build the Docker image (docker/zrhp-z2m/Dockerfile)
+              run: docker build -t zigbee2mqtt-zrhp --build-arg HERDSMAN_REF=${{ github.sha }} --build-arg Z2M_REF=$Z2M_REF -f docker/zrhp-z2m/Dockerfile .
+            - name: End to end (Docker image)
+              run: bash scripts/zrhp/e2e-z2m-sim.sh docker:zigbee2mqtt-zrhp ncp-sim/ncp_sim
