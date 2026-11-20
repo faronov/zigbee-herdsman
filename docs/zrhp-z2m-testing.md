@@ -14,8 +14,8 @@ of the [ZRHP spec](https://github.com/faronov/zigbee-rs/blob/master/docs/book/sr
 >
 > - **Back up** your production Zigbee2MQTT `data` directory before you start (copy the whole folder somewhere safe).
 > - **Never** point the test Zigbee2MQTT at your production `data` directory, `configuration.yaml`, network key,
->   PAN ID or `coordinator_backup.json`. If the NCP restored your production backup it would become a *second
->   coordinator of your real network* with higher frame counters, and the devices would then reject your real
+>   PAN ID or `coordinator_backup.json`. If the NCP restored your production backup it would become a _second
+>   coordinator of your real network_ with higher frame counters, and the devices would then reject your real
 >   coordinator's frames as replays. Use `GENERATE` for the network key, PAN ID and extended PAN ID as shown below.
 > - Give the test instance its own MQTT base topic and frontend port (`zigbee2mqtt-zrhp`, 8081 below), and keep it out of
 >   your production Home Assistant.
@@ -24,18 +24,18 @@ of the [ZRHP spec](https://github.com/faronov/zigbee-rs/blob/master/docs/book/sr
 
 ## 1. Hardware
 
-| Priority | Board | Firmware image | Port to use |
-|---|---|---|---|
-| **1 (primary)** | ESP32-H2 DevKit (ESP32-H2-DevKitM-1 or similar, 4 MB flash) | `zrhp-ncp-h2-usj` | the USB-C port labelled **USB** |
-| 2 | ESP32-C6 DevKit (ESP32-C6-DevKitC-1, 4 or 8 MB flash) | `zrhp-ncp-c6-usj` | the USB-C port labelled **USB** |
-| secondary | Espressif Thread Border Router / Zigbee Gateway board | `zrhp-ncp-h2-br` | see [section 9](#9-secondary-espressif-thread-border-router-board-uart) |
+| Priority        | Board                                                       | Firmware image    | Port to use                                                             |
+| --------------- | ----------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------- |
+| **1 (primary)** | ESP32-H2 DevKit (ESP32-H2-DevKitM-1 or similar, 4 MB flash) | `zrhp-ncp-h2-usj` | the USB-C port labelled **USB**                                         |
+| 2               | ESP32-C6 DevKit (ESP32-C6-DevKitC-1, 4 or 8 MB flash)       | `zrhp-ncp-c6-usj` | the USB-C port labelled **USB**                                         |
+| secondary       | Espressif Thread Border Router / Zigbee Gateway board       | `zrhp-ncp-h2-br`  | see [section 9](#9-secondary-espressif-thread-border-router-board-uart) |
 
 Test the **H2 first**: it is an 802.15.4-only chip, like the main zigbee-rs target. The C6 also has Wi-Fi, which this
 firmware does not use.
 
 Both DevKits have two USB-C connectors:
 
-- **USB** — the chip's native *USB-Serial-JTAG* port. **Use this one.** The NCP talks ZRHP on it, and esptool flashes
+- **USB** — the chip's native _USB-Serial-JTAG_ port. **Use this one.** The NCP talks ZRHP on it, and esptool flashes
   and resets the chip through it.
 - **UART** — a USB-to-UART bridge (CP2102N or CH343) on the chip's UART0. Not used by this firmware (it only carries the
   ROM boot messages). Leave it unplugged.
@@ -44,11 +44,11 @@ Over USB-Serial-JTAG the baud rate and flow-control settings are ignored, so you
 
 ### Serial device names
 
-| OS | The **USB** port shows up as | The UART port (not used) |
-|---|---|---|
-| Linux | `/dev/ttyACM0`, and better `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00` (the number is the chip's MAC) | `/dev/ttyUSB0`, `usb-Silicon_Labs_CP2102N…` or `usb-1a86_USB_Single_Serial…` |
-| macOS | `/dev/cu.usbmodemNNNN` (use the `cu.` name, not `tty.`) | `/dev/cu.usbserial-…`, `/dev/cu.wchusbserial…` |
-| Windows | `COMn` — "USB Serial Device (COMn)" in Device Manager | "Silicon Labs CP210x … (COMn)", "USB-Enhanced-SERIAL CH343 (COMn)" |
+| OS      | The **USB** port shows up as                                                                                                                  | The UART port (not used)                                                     |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Linux   | `/dev/ttyACM0`, and better `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00` (the number is the chip's MAC) | `/dev/ttyUSB0`, `usb-Silicon_Labs_CP2102N…` or `usb-1a86_USB_Single_Serial…` |
+| macOS   | `/dev/cu.usbmodemNNNN` (use the `cu.` name, not `tty.`)                                                                                       | `/dev/cu.usbserial-…`, `/dev/cu.wchusbserial…`                               |
+| Windows | `COMn` — "USB Serial Device (COMn)" in Device Manager                                                                                         | "Silicon Labs CP210x … (COMn)", "USB-Enhanced-SERIAL CH343 (COMn)"           |
 
 On Linux, check with `ls -l /dev/serial/by-id/` and always use the `by-id` path: after an NCP reset the USB device
 re-enumerates and may get another `ttyACM` number. Your user needs access to the port (group `dialout` on
@@ -66,13 +66,13 @@ The images are built by GitHub Actions in faronov/zigbee-rs (branch `ncp-release
 
 Each image folder contains:
 
-| File | Flash offset | What |
-|---|---|---|
-| `zrhp-ncp-<target>-merged.bin` | `0x0` | **the one to use**: full 4 MB image (bootloader + partition table + application, everything else erased) |
-| `zrhp-ncp-<target>-bootloader.bin` | `0x0` | second-stage bootloader (espflash's bundled ESP-IDF bootloader) |
-| `zrhp-ncp-<target>-partition-table.bin` | `0x8000` | partition table (`esp32h2-ncp-4mb`: two application slots and the `zbnv` Zigbee storage) |
-| `zrhp-ncp-<target>-app.bin` | `0x10000` | NCP application (slot `ota_0`) |
-| `FLASHING.txt`, `SHA256SUMS` | | zigbee-rs commit and build features; checksums |
+| File                                    | Flash offset | What                                                                                                     |
+| --------------------------------------- | ------------ | -------------------------------------------------------------------------------------------------------- |
+| `zrhp-ncp-<target>-merged.bin`          | `0x0`        | **the one to use**: full 4 MB image (bootloader + partition table + application, everything else erased) |
+| `zrhp-ncp-<target>-bootloader.bin`      | `0x0`        | second-stage bootloader (espflash's bundled ESP-IDF bootloader)                                          |
+| `zrhp-ncp-<target>-partition-table.bin` | `0x8000`     | partition table (`esp32h2-ncp-4mb`: two application slots and the `zbnv` Zigbee storage)                 |
+| `zrhp-ncp-<target>-app.bin`             | `0x10000`    | NCP application (slot `ota_0`)                                                                           |
+| `FLASHING.txt`, `SHA256SUMS`            |              | zigbee-rs commit and build features; checksums                                                           |
 
 Check the download: `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c SHA256SUMS`).
 
@@ -119,7 +119,7 @@ macOS: `PORT=/dev/cu.usbmodemNNNN`; Windows: `--port COM5`.
 - After flashing, esptool resets the chip ("Hard resetting via RTS pin"). The NCP then prints nothing readable on the
   port: it speaks the binary ZRHP protocol and only answers a host. That is expected.
 - The merged image (and `erase-flash`) gives a **factory-new** NCP: any network stored on the chip is erased. To update
-  the firmware later while *keeping* the test network, write only the application:
+  the firmware later while _keeping_ the test network, write only the application:
   `esptool --chip esp32h2 --port "$PORT" write-flash 0x10000 zrhp-ncp-h2-usj-app.bin`.
 
 ## 4. Build Zigbee2MQTT with the ZRHP herdsman
@@ -165,7 +165,7 @@ git clone -b zrhp https://github.com/faronov/zigbee-herdsman.git
 bash zigbee-herdsman/scripts/zrhp/build-z2m.sh ~/z2m-zrhp      # clones Zigbee2MQTT 2.14.3 into ~/z2m-zrhp and builds it
 ```
 
-The script builds the herdsman fork, makes it *the* zigbee-herdsman of that Zigbee2MQTT checkout (a pnpm override, also
+The script builds the herdsman fork, makes it _the_ zigbee-herdsman of that Zigbee2MQTT checkout (a pnpm override, also
 for zigbee-herdsman-converters) and adds `zrhp` to the allowed `serial.adapter` values. Start Zigbee2MQTT with:
 
 ```bash
@@ -190,26 +190,26 @@ and `transport USB-Serial-JTAG`.
 ```yaml
 version: 5
 homeassistant:
-  enabled: false               # keep the test devices out of your Home Assistant
+    enabled: false # keep the test devices out of your Home Assistant
 frontend:
-  enabled: true
-  port: 8081                   # not your production frontend port
+    enabled: true
+    port: 8081 # not your production frontend port
 mqtt:
-  base_topic: zigbee2mqtt-zrhp # not your production base topic
-  server: mqtt://localhost:1883
-  # user: …
-  # password: …
+    base_topic: zigbee2mqtt-zrhp # not your production base topic
+    server: mqtt://localhost:1883
+    # user: …
+    # password: …
 serial:
-  port: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00   # Docker: /dev/ttyZRHP
-  adapter: zrhp
-  # baudrate / rtscts: not needed over USB-Serial-JTAG (ignored)
+    port: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00 # Docker: /dev/ttyZRHP
+    adapter: zrhp
+    # baudrate / rtscts: not needed over USB-Serial-JTAG (ignored)
 advanced:
-  channel: 20                  # a channel your production network does NOT use
-  network_key: GENERATE        # never your production key
-  pan_id: GENERATE
-  ext_pan_id: GENERATE
-  log_level: debug
-  log_output: [console, file]
+    channel: 20 # a channel your production network does NOT use
+    network_key: GENERATE # never your production key
+    pan_id: GENERATE
+    ext_pan_id: GENERATE
+    log_level: debug
+    log_output: [console, file]
 ```
 
 Zigbee2MQTT replaces the three `GENERATE` values with real ones on the first start. The log then shows (with
@@ -235,8 +235,8 @@ Optional tuning in `data/zrhp_config.json` (defaults shown; normally not needed)
 Please go through what you can and note for each step: time, what you did, what you expected, what happened.
 
 1. **Start**: the first start forms the network (`Started reset`). Stop and start Zigbee2MQTT: `Started resumed`, same
-   PAN ID and channel; *Settings → About* shows the coordinator type `zigbee-rs ZRHP`.
-2. **Pairing**: *Permit join (All)*, then pair 2–5 spare devices, ideally
+   PAN ID and channel; _Settings → About_ shows the coordinator type `zigbee-rs ZRHP`.
+2. **Pairing**: _Permit join (All)_, then pair 2–5 spare devices, ideally
    - a mains-powered router (smart plug or bulb),
    - a battery sensor (temperature/humidity, door/window or motion),
    - a battery button or remote.
@@ -255,9 +255,9 @@ Please go through what you can and note for each step: time, what you did, what 
    image again (section 3), then start Zigbee2MQTT with the same `data` directory. Expected: `Started restored`, and
    the devices keep working **without re-pairing** (sleepy sensors may take a minute or a button press).
 9. **Network map**: note what it shows (the coordinator's own neighbour list is empty in this firmware, see below).
-10. *(optional)* **Green Power** devices (Philips Hue Tap, Friends of Hue switches, FlowerX GP): permit join, put the
+10. _(optional)_ **Green Power** devices (Philips Hue Tap, Friends of Hue switches, FlowerX GP): permit join, put the
     device into commissioning, check that Zigbee2MQTT creates it and sees the button presses.
-11. *(optional)* **The C6 DevKit**: repeat steps 1, 2, 6 and 8 with the C6 image.
+11. _(optional)_ **The C6 DevKit**: repeat steps 1, 2, 6 and 8 with the C6 image.
 
 ### Known limitations of this test build
 
