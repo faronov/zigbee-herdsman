@@ -634,6 +634,9 @@ export const DiagGetNeighborsReq = req(Id.DIAG_GET_NEIGHBORS, {start: u8});
 export const DiagGetNeighborsRsp = rsp(Id.DIAG_GET_NEIGHBORS, {total: u8, entries: listOf(NeighborEntry)});
 export const DiagGetRoutesReq = req(Id.DIAG_GET_ROUTES, {start: u8});
 export const DiagGetRoutesRsp = rsp(Id.DIAG_GET_ROUTES, {total: u8, entries: listOf(RouteEntry)});
+export const ChildEntry = struct({ieee, nwk: u16, capability: u8, timeoutExp: u8, lastPollMs: u32});
+export const DiagGetChildrenReq = req(Id.DIAG_GET_CHILDREN, {start: u8});
+export const DiagGetChildrenRsp = rsp(Id.DIAG_GET_CHILDREN, {total: u8, entries: listOf(ChildEntry)});
 
 // FIRMWARE (7.9) - only the layouts (no host flow in this adapter)
 export const FwBeginReq = req(Id.FW_BEGIN, {imageSize: u32, format: u8, sha256, version: u32, flags: u8});

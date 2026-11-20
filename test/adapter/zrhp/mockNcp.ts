@@ -97,6 +97,14 @@ export class MockNcp {
     /** APS confirm status per destination NWK (default success) */
     readonly apsResult = new Map<number, number>();
     busyOnce = 0;
+    /** answer `BUSY` to the next n requests of a message (5.10: no room for the response) */
+    readonly busy = new Map<number, number>();
+    /** extra SYS_NEGOTIATE capacities (e.g. 19 host_response_bytes) */
+    capacities: {id: number; value: number}[] = [];
+    /** NWK_GET_INFO reports the stored network before NWK_INIT (Z11) */
+    infoBeforeInit = false;
+    /** NWK_GROUP_MEMBERSHIP implemented: `${group}:${ep}` memberships */
+    groups: Set<string> | undefined;
     eventSeq = 0;
     #timer: NodeJS.Timeout | undefined;
     #powered = true;
@@ -267,6 +275,12 @@ export class MockNcp {
 
     private dispatch(req: M.Message): Buffer | undefined {
         const ok = Buffer.from([Status.SUCCESS]);
+        const busy = this.busy.get(req.msgId) ?? 0;
+
+        if (busy > 0) {
+            this.busy.set(req.msgId, busy - 1);
+            return Buffer.from([Status.BUSY]);
+        }
 
         switch (req.msgId) {
             case M.Id.SYS_NEGOTIATE:
@@ -274,10 +288,7 @@ export class MockNcp {
                     major: 1,
                     minor: 0,
                     ncpCaps: this.caps,
-                    capacities: [
-                        {id: 1, value: 4},
-                        {id: 7, value: 1024},
-                    ],
+                    capacities: [{id: 1, value: 4}, {id: 7, value: 1024}, ...this.capacities],
                     fw: Buffer.from("mock/1.0"),
                     buildId: Buffer.alloc(8, 1),
                     chip: 1,
@@ -315,7 +326,19 @@ export class MockNcp {
                                   securityLevel: 5,
                                   stackProfile: 2,
                               }
-                            : {state: n ? 1 : 0, ieee: MOCK_IEEE, securityLevel: 5, stackProfile: 2},
+                            : n && this.infoBeforeInit
+                              ? {
+                                    state: 1,
+                                    panId: n.panId,
+                                    extPanId: n.extPanId,
+                                    channel: n.channel,
+                                    ieee: MOCK_IEEE,
+                                    nwkUpdateId: n.nwkUpdateId,
+                                    keySeq: n.keySeq,
+                                    securityLevel: 5,
+                                    stackProfile: 2,
+                                }
+                              : {state: n ? 1 : 0, ieee: MOCK_IEEE, securityLevel: 5, stackProfile: 2},
                     ),
                 );
             }
@@ -357,6 +380,37 @@ export class MockNcp {
             case M.Id.NWK_PERMIT_JOIN:
             case M.Id.SEC_LOCK_KEY_EXPORT:
                 return ok;
+            case M.Id.NWK_GROUP_MEMBERSHIP: {
+                if (!this.groups) {
+                    return Buffer.from([Status.UNSUPPORTED_COMMAND]);
+                }
+
+                if (!this.up) {
+                    return Buffer.from([Status.INVALID_STATE]);
+                }
+
+                const g = M.NwkGroupMembershipReq.decode(req.payload);
+
+                if (g.ep === 0 || (g.ep > 240 && g.ep !== 242) || g.group > 0xfff7) {
+                    return Buffer.from([Status.INVALID_PARAMETER]);
+                }
+
+                if (g.op === 1) {
+                    if (!this.groups.has(`${g.group}:${g.ep}`) && this.groups.size >= 4) {
+                        return Buffer.from([Status.NO_SPACE]);
+                    }
+
+                    this.groups.add(`${g.group}:${g.ep}`);
+                } else if (g.op === 2) {
+                    this.groups.delete(`${g.group}:${g.ep}`);
+                } else {
+                    for (const m of [...this.groups].filter((m) => m.endsWith(`:${g.ep}`))) {
+                        this.groups.delete(m);
+                    }
+                }
+
+                return ok;
+            }
             case M.Id.TBL_SYNC:
                 return M.encodeResponse(M.TblSyncRsp, M.TblSyncRsp.make({ncpTableEpoch: this.tableEpoch}));
             case M.Id.TBL_PUSH:

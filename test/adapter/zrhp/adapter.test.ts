@@ -16,6 +16,7 @@ import * as ZSpec from "../../../src/zspec";
 import type {Eui64} from "../../../src/zspec/tstypes";
 import * as Zcl from "../../../src/zspec/zcl";
 import * as Zdo from "../../../src/zspec/zdo";
+import type * as ZdoTypes from "../../../src/zspec/zdo/definition/tstypes";
 import {MockNcp, MockPort} from "./mockNcp";
 
 const KEY = [1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 13];
@@ -364,9 +365,30 @@ describe("ZRHP adapter against a scriptable NCP", () => {
         await expect(adapter.sendZdo(ZSpec.BLANK_EUI64, 0xffff, Zdo.ClusterId.NWK_UPDATE_REQUEST, upd, true)).rejects.toThrow(
             "cannot change the channel",
         );
-        ncp.overrides.set(M.Id.NWK_CHANGE_CHANNEL, () => Buffer.from([0]));
+        // supported: answered at once, EVT_CHANNEL_CHANGED (matched by the request TID) after the broadcast delivery time
+        let radio = 15;
+        ncp.overrides.set(M.Id.NWK_CHANGE_CHANNEL, (req) => {
+            const c = M.NwkChangeChannelReq.decode(req.payload);
+            setTimeout(() => {
+                ncp.event(M.Id.EVT_CHANNEL_CHANGED, M.EvtChannelChanged, {channel: 11, nwkUpdateId: 9, reqTid: (req.tid + 1) & 0xffff});
+                if (ncp.network && radio === c.channel) {
+                    ncp.network.channel = c.channel;
+                    ncp.network.nwkUpdateId = c.nwkUpdateId;
+                }
+                ncp.event(M.Id.EVT_CHANNEL_CHANGED, M.EvtChannelChanged, {channel: radio, nwkUpdateId: c.nwkUpdateId, reqTid: req.tid});
+            }, 30);
+            return Buffer.from([0]);
+        });
+        ncp.busy.set(M.Id.NWK_CHANGE_CHANNEL, 1);
         await adapter.sendZdo(ZSpec.BLANK_EUI64, 0xffff, Zdo.ClusterId.NWK_UPDATE_REQUEST, upd, true);
         expect(M.NwkChangeChannelReq.decode(ncp.last(M.Id.NWK_CHANGE_CHANNEL)?.payload as Buffer)).toStrictEqual({channel: 15, nwkUpdateId: 1});
+        expect((await adapter.getNetworkParameters()).channel).toStrictEqual(15);
+        // a failed tune reports the old channel
+        radio = 15;
+        const upd2 = Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.NWK_UPDATE_REQUEST, [20], 0xfe, undefined, 2, undefined);
+        await expect(adapter.sendZdo(ZSpec.BLANK_EUI64, 0xffff, Zdo.ClusterId.NWK_UPDATE_REQUEST, upd2, true)).rejects.toThrow(
+            "stayed on channel 15",
+        );
         // coordinator: power descriptor, IEEE_addr, unknown request, routes (DIAG unsupported -> empty)
         const coord = "0x8877665544332211";
         const pd = await adapter.sendZdo(
@@ -428,6 +450,204 @@ describe("ZRHP adapter against a scriptable NCP", () => {
         await expect(adapter.sendZclFrameInterPANToIeeeAddr({} as Zcl.Frame, DEV_IEEE)).rejects.toThrow("Inter-PAN");
         await expect(adapter.sendZclFrameInterPANBroadcast({} as Zcl.Frame, 1, false)).rejects.toThrow("Inter-PAN");
         await expect(adapter.restoreChannelInterPAN()).rejects.toThrow("Inter-PAN");
+    });
+
+    it("pages DIAG tables into the coordinator's Mgmt_Lqi/Mgmt_Rtg, with children and route flags", async () => {
+        make();
+        await adapter.start();
+        const coord = "0x8877665544332211";
+        const neighbours = Array.from({length: 20}, (_, i) => ({
+            ieee: Buffer.from([i + 1, 0, 0, 0, 0, 0, 0, 0x10]),
+            nwk: 0x1000 + i,
+            deviceType: i % 2 === 0 ? 1 : 2,
+            rxOn: i % 2 === 0 ? 1 : 0,
+            relationship: i % 2 === 0 ? 2 : 1,
+            lqi: 100 + i,
+            outgoingCost: 1,
+            age: 0,
+        }));
+        ncp.overrides.set(M.Id.DIAG_GET_NEIGHBORS, (req) => {
+            const start = M.DiagGetNeighborsReq.decode(req.payload).start;
+            return M.encodeResponse(M.DiagGetNeighborsRsp, {total: 20, entries: neighbours.slice(start, start + 16)});
+        });
+        ncp.overrides.set(M.Id.DIAG_GET_CHILDREN, () =>
+            M.encodeResponse(M.DiagGetChildrenRsp, {
+                total: 2,
+                entries: [
+                    {ieee: neighbours[1].ieee, nwk: 0x1001, capability: 0x80, timeoutExp: 8, lastPollMs: 10},
+                    {ieee: DEV_ONAIR, nwk: 0x2222, capability: 0x80, timeoutExp: 8, lastPollMs: 0xffffffff},
+                ],
+            }),
+        );
+        ncp.overrides.set(M.Id.DIAG_GET_ROUTES, () =>
+            M.encodeResponse(M.DiagGetRoutesRsp, {
+                total: 2,
+                entries: [
+                    {dst: 0x1000, nextHop: 0x1000, status: 0, flags: 0x02},
+                    {dst: 0x1002, nextHop: 0x1000, status: 0, flags: 0x04},
+                ],
+            }),
+        );
+        const entries: ZdoTypes.LQITableEntry[] = [];
+        let total = 0;
+
+        do {
+            const rsp = await adapter.sendZdo(
+                coord,
+                0,
+                Zdo.ClusterId.LQI_TABLE_REQUEST,
+                Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.LQI_TABLE_REQUEST, entries.length),
+                false,
+            );
+            expect(rsp[0]).toStrictEqual(Zdo.Status.SUCCESS);
+            total = rsp[1]?.neighborTableEntries ?? 0;
+            expect(rsp[1]?.entryList.length).toBeLessThanOrEqual(3);
+            entries.push(...(rsp[1]?.entryList ?? []));
+        } while (entries.length < total);
+
+        expect(total).toStrictEqual(21);
+        expect(entries[0]).toMatchObject({nwkAddress: 0x1000, deviceType: 1, relationship: 2, lqi: 100});
+        expect(entries[20]).toMatchObject({eui64: DEV_IEEE, nwkAddress: 0x2222, deviceType: 2, rxOnWhenIdle: 0, relationship: 1, lqi: 0});
+        // the neighbour table is read page by page (16 entries)
+        const starts = ncp.requests.filter((r) => r.msgId === M.Id.DIAG_GET_NEIGHBORS).map((r) => r.payload[0]);
+        expect(starts.slice(0, 2)).toStrictEqual([0, 16]);
+        const rt = await adapter.sendZdo(
+            coord,
+            0,
+            Zdo.ClusterId.ROUTING_TABLE_REQUEST,
+            Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.ROUTING_TABLE_REQUEST, 0),
+            false,
+        );
+        expect(rt[1]?.entryList).toMatchObject([
+            {destinationAddress: 0x1000, manyToOne: 1, routeRecordRequired: 0, nextHopAddress: 0x1000},
+            {destinationAddress: 0x1002, manyToOne: 0, routeRecordRequired: 1},
+        ]);
+    });
+
+    it("keeps the coordinator's group memberships on the NCP (genGroups to the coordinator, groupcasts)", async () => {
+        ncp.groups = new Set();
+        make();
+        await adapter.start();
+        // GP sink group on 242, ember's default groups on endpoint 1
+        expect([...ncp.groups].sort()).toStrictEqual(["0:1", "2948:242", "901:1"]);
+        const groups = (cmd: string, payload: object): Zcl.Frame =>
+            Zcl.Frame.create(Zcl.FrameType.SPECIFIC, Zcl.Direction.CLIENT_TO_SERVER, false, undefined, 9, cmd, "genGroups", payload, {});
+        const parse = (p: ZclPayload | undefined): Record<string, unknown> =>
+            Zcl.Frame.fromBuffer(p?.clusterID as number, p?.header, p?.data as Buffer, {}).payload;
+        const add = await adapter.sendZclFrameToEndpoint(ZSpec.BLANK_EUI64, 0, 1, groups("add", {groupid: 5, groupname: ""}), 1000, false, false);
+        expect(add?.header?.commandIdentifier).toStrictEqual(0x00);
+        expect(parse(add)).toStrictEqual({status: Zcl.Status.SUCCESS, groupid: 5});
+        expect(ncp.groups.has("5:1")).toStrictEqual(true);
+        const full = await adapter.sendZclFrameToEndpoint(ZSpec.BLANK_EUI64, 0, 1, groups("add", {groupid: 6, groupname: ""}), 1000, false, false);
+        expect(parse(full).status).toStrictEqual(Zcl.Status.INSUFFICIENT_SPACE);
+        const removed = await adapter.sendZclFrameToEndpoint(ZSpec.BLANK_EUI64, 0, 1, groups("remove", {groupid: 5}), 1000, false, false);
+        expect(parse(removed)).toStrictEqual({status: Zcl.Status.SUCCESS, groupid: 5});
+        await expect(
+            adapter.sendZclFrameToEndpoint(ZSpec.BLANK_EUI64, 0, 241, groups("addIfIdentifying", {groupid: 6, groupname: ""}), 1000, false, false),
+        ).rejects.toThrow();
+        // a groupcast makes the coordinator a member (ember's multicast passthrough), once
+        const toggle = Zcl.Frame.create(Zcl.FrameType.SPECIFIC, Zcl.Direction.CLIENT_TO_SERVER, true, undefined, 3, "toggle", "genOnOff", {}, {});
+        await adapter.sendZclFrameToGroup(7, toggle);
+        await adapter.sendZclFrameToGroup(7, toggle);
+        expect(ncp.groups.has("7:1")).toStrictEqual(true);
+        expect(ncp.requests.filter((r) => r.msgId === M.Id.NWK_GROUP_MEMBERSHIP && r.payload.readUInt16LE(1) === 7).length).toStrictEqual(1);
+        // replayed after an NCP reboot
+        ncp.groups.clear();
+        ncp.reboot();
+        await until(() => ncp.groups?.has("7:1") === true);
+        expect(await adapter.sendZclFrameToEndpoint(ZSpec.BLANK_EUI64, 0, 1, groups("removeAll", {}), 1000, false, false)).toBeUndefined();
+        expect([...ncp.groups].filter((g) => g.endsWith(":1"))).toStrictEqual([]);
+        // other commands to the coordinator are not sent
+        expect(await adapter.sendZclFrameToEndpoint(ZSpec.BLANK_EUI64, 0, 1, groups("view", {groupid: 5}), 1000, false, false)).toBeUndefined();
+        // an NCP without NWK_GROUP_MEMBERSHIP: herdsman keeps the membership in its database only
+        ncp.groups = undefined;
+        expect(
+            await adapter.sendZclFrameToEndpoint(ZSpec.BLANK_EUI64, 0, 1, groups("add", {groupid: 8, groupname: ""}), 1000, false, false),
+        ).toBeUndefined();
+    });
+
+    it("uses the NCP's response budget (capacity 19) and retries BUSY on any request", async () => {
+        ncp.capacities = [{id: 19, value: 384}];
+        make();
+        await adapter.start();
+        expect(adapter.api.responseBudget).toStrictEqual(384);
+        ncp.busy.set(M.Id.NWK_GET_INFO, 3);
+        const before = adapter.api.counters.busyRetries;
+        expect((await adapter.getNetworkParameters()).panID).toStrictEqual(0x2b2b);
+        expect(adapter.api.counters.busyRetries - before).toStrictEqual(3);
+        // concurrent echoes stay within the budget (64-byte echoes)
+        const echoes = await Promise.all(
+            Array.from({length: 4}, (_, i) => adapter.api.request(M.Id.SYS_ECHO, M.SysEchoReq, {data: Buffer.alloc(64, i)}, M.SysEchoRsp)),
+        );
+        expect(echoes.map(([, r]) => r?.data[0])).toStrictEqual([0, 1, 2, 3]);
+        // without capacity 19: the host default
+        await adapter.stop();
+        ncp.capacities = [];
+        ncp.reboot();
+        make();
+        await adapter.start();
+        expect(adapter.api.responseBudget).toStrictEqual(1024);
+    });
+
+    it("compares the stored network before NWK_INIT (Z11) and restores over a running network (9.4 rule 1)", async () => {
+        ncp.infoBeforeInit = true;
+        ncp.network = {panId: 0x2b2b, extPanId: Buffer.from(EPID).reverse(), channel: 25, key: Buffer.from(KEY), keySeq: 0, nwkUpdateId: 0};
+        make();
+        expect(await adapter.start()).toStrictEqual("resumed");
+        const ids = ncp.requests.map((r) => r.msgId);
+        expect(ids.indexOf(M.Id.NWK_GET_INFO)).toBeLessThan(ids.indexOf(M.Id.NWK_INIT));
+        expect(ncp.count(M.Id.NWK_INIT)).toStrictEqual(1);
+        await adapter.stop();
+
+        // another network runs; the backup matches the configuration: restored without a leave first
+        ncp.network = {panId: 0x1111, extPanId: Buffer.alloc(8, 0x11), channel: 11, key: Buffer.alloc(16, 0x11), keySeq: 0, nwkUpdateId: 0};
+        ncp.reboot();
+        ncp.up = true;
+        writeFileSync(
+            join(dir, "coordinator_backup.json"),
+            JSON.stringify({
+                metadata: {format: "zigpy/open-coordinator-backup", version: 1, source: "x", internal: {}},
+                coordinator_ieee: "8877665544332211",
+                pan_id: "2b2b",
+                extended_pan_id: Buffer.from(EPID).toString("hex"),
+                nwk_update_id: 0,
+                security_level: 5,
+                channel: 25,
+                channel_mask: [25],
+                network_key: {key: Buffer.from(KEY).toString("hex"), sequence_number: 0, frame_counter: 0},
+                devices: [],
+            }),
+        );
+        let refuse = false;
+        ncp.overrides.set(M.Id.BKP_RESTORE_BEGIN, () =>
+            refuse && ncp.network ? Buffer.from([Status.INVALID_STATE]) : M.encodeResponse(M.BkpRestoreBeginRsp, {txn: 5, maxRecordsPerPut: 16}),
+        );
+        ncp.overrides.set(M.Id.BKP_RESTORE_PUT, () => M.encodeResponse(M.BkpRestorePutRsp, {accepted: 4, notes: []}));
+        ncp.overrides.set(M.Id.BKP_RESTORE_COMMIT, () => {
+            ncp.up = false;
+            ncp.network = {panId: 0x2b2b, extPanId: Buffer.from(EPID).reverse(), channel: 25, key: Buffer.from(KEY), keySeq: 0, nwkUpdateId: 0};
+            return M.encodeResponse(M.BkpRestoreCommitRsp, {
+                nwkFcStart: 10000,
+                apsFcStart: 1 << 20,
+                linkKeysOnNcp: 0,
+                linkKeysHostBacked: 0,
+                children: 0,
+            });
+        });
+        make();
+        expect(await adapter.start()).toStrictEqual("restored");
+        expect(ncp.count(M.Id.NWK_LEAVE_RESET)).toStrictEqual(0);
+        await adapter.stop();
+
+        // an NCP image that restores only with the stack stopped: wiped first
+        ncp.network = {panId: 0x1111, extPanId: Buffer.alloc(8, 0x11), channel: 11, key: Buffer.alloc(16, 0x11), keySeq: 0, nwkUpdateId: 0};
+        ncp.reboot();
+        ncp.up = true;
+        refuse = true;
+        make();
+        expect(await adapter.start()).toStrictEqual("restored");
+        expect(ncp.count(M.Id.NWK_LEAVE_RESET)).toStrictEqual(1);
+        expect(ncp.count(M.Id.BKP_RESTORE_BEGIN)).toStrictEqual(3);
     });
 
     it("adds install codes with the fallbacks SEC_ADD_INSTALL_CODE -> SEC_ADD_LINK_KEY -> TBL_PUSH", async () => {

@@ -14,8 +14,9 @@ permissions:
 
 env:
     ZIGBEE_RS_REPO: https://github.com/faronov/zigbee-rs.git
-    # master once the simulator is merged there; zrhp-ncp-sim before that
-    ZIGBEE_RS_REFS: "master zrhp-ncp-sim"
+    # first ref that has examples/ncp_sim.rs wins: ncp-host-gaps (capacity 19, BUSY, groups, DIAG, channel change) until it
+    # is merged, then master
+    ZIGBEE_RS_REFS: "ncp-host-gaps master zrhp-ncp-sim"
     RUST_TOOLCHAIN: nightly-2026-03-23
     Z2M_REF: 2.14.3
 

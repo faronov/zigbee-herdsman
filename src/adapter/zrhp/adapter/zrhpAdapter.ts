@@ -127,6 +127,22 @@ type ZdoMatcher = {address: number | string | undefined; clusterId: number; tran
 type NwkInfo = StructOf<typeof M.NwkGetInfoRsp.fields>;
 type Confirm = StructOf<typeof M.EvtApsDataConfirm.fields>;
 
+/** `NWK_GET_INFO` carries the stored network (valid in state 1 before `NWK_INIT`, Z11) rather than an unconfigured NIB. */
+function storedIdentity(info: NwkInfo): boolean {
+    return (
+        info.panId !== 0x0000 &&
+        info.panId !== 0xffff &&
+        !info.extPanId.equals(Buffer.alloc(8)) &&
+        !info.extPanId.equals(Buffer.alloc(8, 0xff)) &&
+        !info.ieee.equals(Buffer.alloc(8))
+    );
+}
+
+/** Groups of the coordinator endpoint 1 set up at every start (as ember: 0 and Z2M's default bind group 901). */
+const DEFAULT_GROUPS = [0x0000, 901];
+/** `EVT_CHANNEL_CHANGED` comes `nwkNetworkBroadcastDeliveryTime` (9 s) after the answer. */
+const CHANNEL_CHANGE_WAIT_MS = 20_000;
+
 /** big-endian `0x…` string of on-air bytes */
 function hexBE(onAir: Buffer): string {
     return `0x${Buffer.from(onAir).reverse().toString("hex")}`;
@@ -205,6 +221,11 @@ export class ZrhpAdapter extends Adapter {
     private reopenTimer: NodeJS.Timeout | undefined;
     private resumeRun = 0;
     private permitUntil: number | undefined;
+    private channelWaiter: ((ev: StructOf<typeof M.EvtChannelChanged.fields>) => void) | undefined;
+    /** groups of coordinator endpoint 1 beyond {@link DEFAULT_GROUPS}, replayed after an NCP restart */
+    private readonly coordinatorGroups = new Set<number>();
+    /** groups herdsman sent to that the coordinator was asked to join (ember's multicast passthrough) */
+    private readonly triedGroups = new Set<number>();
     private keyExportLocked = false;
     /** counters exposed for diagnostics */
     readonly stats = {ncpResumed: 0, ncpRestarts: 0};
@@ -486,8 +507,8 @@ export class ZrhpAdapter extends Adapter {
     private async initNetwork(): Promise<TsType.StartResult> {
         let info = await this.getInfo();
 
-        if (info.state === NetworkState.FORMED_DOWN) {
-            // formed-down reads back as an unconfigured NIB: bring it up before comparing
+        if (info.state === NetworkState.FORMED_DOWN && !storedIdentity(info)) {
+            // NCP images before the Z11 fix report an unconfigured NIB until NWK_INIT: bring it up before comparing
             await this.bringUp();
             info = await this.getInfo();
         }
@@ -499,6 +520,12 @@ export class ZrhpAdapter extends Adapter {
 
             if (this.configMatches(info.panId, info.extPanId, key)) {
                 logger.info("NCP network matches the configuration", NS);
+
+                if (info.state !== NetworkState.UP) {
+                    await this.bringUp();
+                    await this.getInfo();
+                }
+
                 return "resumed";
             }
 
@@ -518,10 +545,26 @@ export class ZrhpAdapter extends Adapter {
 
                 if (this.adapterOptions.forceStartWithInconsistentAdapterConfiguration) {
                     logger.error("Running despite the configuration mismatch as configured.", NS);
+
+                    if (info.state !== NetworkState.UP) {
+                        await this.bringUp();
+                        await this.getInfo();
+                    }
+
                     return "resumed";
                 }
 
                 throw new Error("startup failed - configuration-adapter mismatch - see logs above for more information");
+            }
+
+            if (backup !== undefined && this.backupMatchesConfig(backup)) {
+                // 9.4 rule 1: BEGIN with the network up, COMMIT replaces it (older NCPs: wipe first)
+                logger.info("NCP network does not match the configuration: restoring the backup over it", NS);
+                await this.restoreFromOcb(backup, true);
+                await this.bringUp();
+                await this.getInfo();
+
+                return "restored";
             }
 
             logger.info("NCP network does not match the configuration: leaving it", NS);
@@ -529,7 +572,7 @@ export class ZrhpAdapter extends Adapter {
         }
 
         if (backup !== undefined && this.backupMatchesConfig(backup)) {
-            await this.restoreFromOcb(backup);
+            await this.restoreFromOcb(backup, false);
             await this.bringUp();
             await this.getInfo();
 
@@ -589,7 +632,7 @@ export class ZrhpAdapter extends Adapter {
     }
 
     /** `BKP_RESTORE_*` (spec 9.4) of a herdsman/zigpy OCB file. */
-    private async restoreFromOcb(ocb: Json): Promise<void> {
+    private async restoreFromOcb(ocb: Json, networkPresent: boolean): Promise<void> {
         const active = this.info?.ieeeActive ?? Buffer.alloc(8);
         const wanted = onAirOf(String(ocb.coordinator_ieee));
         let allowIeee = !wanted.equals(active);
@@ -632,12 +675,19 @@ export class ZrhpAdapter extends Adapter {
         });
 
         const maxPerPut = this.session.capacity(Capacity.MAX_RESTORE_RECORDS_PER_PUT, 16) || 16;
-        const [, begin] = await this.api.request(
-            M.Id.BKP_RESTORE_BEGIN,
-            M.BkpRestoreBeginReq,
-            {flags: allowIeee ? 0x01 : 0x00, nwkMargin, apsMargin, expectedRecords: records.length},
-            M.BkpRestoreBeginRsp,
-        );
+        const beginReq = {flags: allowIeee ? 0x01 : 0x00, nwkMargin, apsMargin, expectedRecords: records.length};
+        let [status, begin] = await this.api.request(M.Id.BKP_RESTORE_BEGIN, M.BkpRestoreBeginReq, beginReq, M.BkpRestoreBeginRsp, {
+            allow: [Status.SUCCESS, Status.INVALID_STATE],
+        });
+
+        if (status === Status.INVALID_STATE && networkPresent) {
+            // NCP images before 9.4 rule 1 was relaxed restore only with the stack stopped (12.1.1 Z3)
+            logger.info("NCP refuses a restore while its network runs: wiping it first", NS);
+            await this.api.request(M.Id.NWK_LEAVE_RESET, M.NwkLeaveResetReq, {flags: 0x02}, undefined, {timeout: 15_000});
+            [status, begin] = await this.api.request(M.Id.BKP_RESTORE_BEGIN, M.BkpRestoreBeginReq, beginReq, M.BkpRestoreBeginRsp);
+        } else if (status !== Status.SUCCESS) {
+            throw new ZrhpError(M.Id.BKP_RESTORE_BEGIN, status);
+        }
         const txn = begin?.txn ?? 0;
 
         try {
@@ -710,7 +760,11 @@ export class ZrhpAdapter extends Adapter {
             groupcastRadius: 0,
         });
         // GP Notifications groupcast to 0x0B84 reach the host only if the GP endpoint is a member.
-        await this.optional(M.Id.NWK_GROUP_MEMBERSHIP, M.NwkGroupMembershipReq, {op: 1, group: ZSpec.GP_GROUP_ID, ep: ZSpec.GP_ENDPOINT});
+        await this.groupMembership(1, ZSpec.GP_GROUP_ID, ZSpec.GP_ENDPOINT);
+
+        for (const group of new Set([...DEFAULT_GROUPS, ...this.coordinatorGroups])) {
+            await this.groupMembership(1, group, HOST_ENDPOINTS[0].endpoint);
+        }
 
         if (this.adapterOptions.transmitPower !== undefined) {
             await this.optional(M.Id.NWK_SET_TX_POWER, M.NwkSetTxPowerReq, {dbm: Math.round(this.adapterOptions.transmitPower)});
@@ -889,12 +943,13 @@ export class ZrhpAdapter extends Adapter {
         }
 
         const known = this.nwk;
+        let net = await this.getInfo();
 
-        if (ready.networkState !== NetworkState.UP) {
+        if (net.state !== NetworkState.UP && !storedIdentity(net)) {
+            // older NCP images: the identity is readable only once the network is up
             await this.bringUp();
+            net = await this.getInfo();
         }
-
-        const net = await this.getInfo();
 
         if (known) {
             const seqGe = (a: number, b: number): boolean => ((a - b) & 0xff) < 0x80;
@@ -912,6 +967,11 @@ export class ZrhpAdapter extends Adapter {
             if (mismatch.length > 0) {
                 throw new Error(`NCP network differs after restart: ${mismatch.join(", ")}`);
             }
+        }
+
+        if (net.state !== NetworkState.UP) {
+            await this.bringUp();
+            await this.getInfo();
         }
 
         [, this.info] = await this.api.request(M.Id.SYS_GET_INFO, M.SysGetInfoReq, {}, M.SysGetInfoRsp);
@@ -1041,17 +1101,18 @@ export class ZrhpAdapter extends Adapter {
     }
 
     /** Fill keys the NCP does not cache (paging) from the host store (spec 9.5, 12.1.1 Z4). */
+    /**
+     * 9.5 presence rule (Z4): a standalone NCP is authoritative for what it exports. An exported `DEVICE` record with a link
+     * block replaces the host's key (and updates the sidecar store); one without keeps the host's key. Every link-key
+     * `tx_counter` becomes the exported APS limit.
+     */
     private mergeHostKeys(records: ZrhpRecord[]): ZrhpRecord[] {
         const host = new Map([...(this.store?.keys.values() ?? [])].filter((r) => r.key).map((r) => [r.ieee, r]));
-
-        if (host.size === 0) {
-            return records;
-        }
-
         const body = records.filter((r) => r.type !== RecordType.END);
         const tclk = body.find((r) => r.type === RecordType.TC_LINK_KEY);
         const apsLimit = tclk?.type === RecordType.TC_LINK_KEY ? tclk.value.txCounter : 0;
         const seen = new Set<string>();
+        let changed = false;
         const out: ZrhpRecord[] = body.map((r) => {
             if (r.type !== RecordType.DEVICE) {
                 return r;
@@ -1061,11 +1122,32 @@ export class ZrhpAdapter extends Adapter {
             seen.add(ieee);
             const h = host.get(ieee);
 
-            return r.value.link || !h ? r : {type: RecordType.DEVICE, value: {...r.value, link: linkOf(h, apsLimit)}};
+            if (r.value.link) {
+                const row = rowOf(r.value, 0);
+
+                if (this.store && (!h || h.key !== row.key || h.keySeq !== row.keySeq || h.attrs !== row.attrs)) {
+                    this.store.upsertKey({...row, rev: h?.rev ?? 0});
+                }
+
+                if (apsLimit > 0 && r.value.link.txCounter !== apsLimit) {
+                    changed = true;
+                    return {type: RecordType.DEVICE, value: {...r.value, link: {...r.value.link, txCounter: apsLimit}}};
+                }
+
+                return r;
+            }
+
+            if (!h) {
+                return r;
+            }
+
+            changed = true;
+            return {type: RecordType.DEVICE, value: {...r.value, link: linkOf(h, apsLimit)}};
         });
 
         for (const [ieee, h] of host) {
             if (!seen.has(ieee)) {
+                changed = true;
                 out.push({
                     type: RecordType.DEVICE,
                     value: {
@@ -1078,7 +1160,7 @@ export class ZrhpAdapter extends Adapter {
             }
         }
 
-        return [...out, endRecord(out.map(encodeRecord))];
+        return changed ? [...out, endRecord(out.map(encodeRecord))] : records;
     }
 
     public async getNetworkParameters(): Promise<TsType.NetworkParameters> {
@@ -1189,6 +1271,7 @@ export class ZrhpAdapter extends Adapter {
             try {
                 raw = await this.api.requestRaw(M.Id.APS_DATA_REQUEST, payload, {
                     retry: true,
+                    busyRetry: false, // the loop below retries BUSY with its own confirm bookkeeping
                     onSent: (t) => {
                         tid = t;
                         this.confirms.set(t, resolveConfirm);
@@ -1351,9 +1434,31 @@ export class ZrhpAdapter extends Adapter {
             throw new Error(`Invalid channel mask 0x${mask.toString(16)}`);
         }
 
+        // EVT_CHANNEL_CHANGED names the request by its TID (BUSY retries send new ones)
+        const tids = new Set<number>();
+        let settle: ((ev: StructOf<typeof M.EvtChannelChanged.fields>) => void) | undefined;
+        const changed = new Promise<StructOf<typeof M.EvtChannelChanged.fields> | undefined>((resolve) => {
+            const timer = setTimeout(() => {
+                settle = undefined;
+                resolve(undefined);
+            }, CHANNEL_CHANGE_WAIT_MS);
+            settle = (ev) => {
+                if (tids.has(ev.reqTid)) {
+                    clearTimeout(timer);
+                    settle = undefined;
+                    resolve(ev);
+                }
+            };
+        });
+        this.channelWaiter = (ev) => settle?.(ev);
+
         try {
-            await this.api.request(M.Id.NWK_CHANGE_CHANNEL, M.NwkChangeChannelReq, {channel, nwkUpdateId});
+            await this.api.request(M.Id.NWK_CHANGE_CHANNEL, M.NwkChangeChannelReq, {channel, nwkUpdateId}, undefined, {
+                onSent: (tid) => tids.add(tid),
+            });
         } catch (error) {
+            this.channelWaiter = undefined;
+
             if (error instanceof ZrhpError && error.status === Status.UNSUPPORTED_COMMAND) {
                 throw new Error(
                     `This NCP firmware cannot change the channel yet (NWK_CHANGE_CHANNEL). Set the configured channel back to ${this.nwk?.channel}.`,
@@ -1362,19 +1467,160 @@ export class ZrhpAdapter extends Adapter {
 
             throw error;
         }
+
+        logger.info(`NCP announced the move to channel ${channel}; waiting for the switch`, NS);
+        const ev = await changed;
+        this.channelWaiter = undefined;
+
+        if (ev === undefined) {
+            throw new Error(`NCP did not report the move to channel ${channel} (EVT_CHANNEL_CHANGED)`);
+        }
+
+        await this.getInfo();
+
+        if (ev.channel !== channel) {
+            // the NV already holds the new channel: a reboot of the NCP completes the move
+            throw new Error(`NCP radio stayed on channel ${ev.channel} (requested ${channel}); restart the NCP`);
+        }
+    }
+
+    /** `NWK_GROUP_MEMBERSHIP`; the status (`UNSUPPORTED_COMMAND`/`INVALID_STATE` from older images included). */
+    private async groupMembership(op: 1 | 2 | 3, group: number, ep: number): Promise<number> {
+        const [status] = await this.api.request(M.Id.NWK_GROUP_MEMBERSHIP, M.NwkGroupMembershipReq, {op, group, ep}, undefined, {
+            allow: [Status.SUCCESS, Status.NO_SPACE, Status.INVALID_PARAMETER, Status.INVALID_STATE, Status.UNSUPPORTED_COMMAND],
+        });
+
+        if (status !== Status.SUCCESS) {
+            logger.debug(`NWK_GROUP_MEMBERSHIP op=${op} group=${group} ep=${ep}: ${Status[status] ?? status}`, NS);
+        }
+
+        return status;
+    }
+
+    /**
+     * genGroups commands herdsman sends to the coordinator's own endpoints (Endpoint.addToGroup etc.), answered locally
+     * after `NWK_GROUP_MEMBERSHIP`; `undefined` when the NCP cannot keep group memberships.
+     */
+    private async coordinatorGroupCommand(endpoint: number, zclFrame: Zcl.Frame): Promise<ZclPayload | undefined> {
+        const cmd = zclFrame.command.name;
+        const groupId = (zclFrame.payload as {groupid?: number}).groupid ?? 0;
+        let status: number;
+        let rsp: "addRsp" | "removeRsp" | undefined;
+
+        switch (cmd) {
+            case "add":
+            case "addIfIdentifying":
+                status = await this.groupMembership(1, groupId, endpoint);
+                rsp = cmd === "add" ? "addRsp" : undefined;
+
+                if (status === Status.SUCCESS && endpoint === HOST_ENDPOINTS[0].endpoint) {
+                    this.coordinatorGroups.add(groupId);
+                }
+
+                break;
+            case "remove":
+                status = await this.groupMembership(2, groupId, endpoint);
+                rsp = "removeRsp";
+
+                if (status === Status.SUCCESS && endpoint === HOST_ENDPOINTS[0].endpoint) {
+                    this.coordinatorGroups.delete(groupId);
+                }
+
+                break;
+            case "removeAll":
+                status = await this.groupMembership(3, 0, endpoint);
+
+                if (status === Status.SUCCESS && endpoint === HOST_ENDPOINTS[0].endpoint) {
+                    this.coordinatorGroups.clear();
+                }
+
+                break;
+            default:
+                return undefined;
+        }
+
+        if (status === Status.UNSUPPORTED_COMMAND || status === Status.INVALID_STATE) {
+            logger.warning(`This NCP firmware keeps no group memberships for the coordinator (genGroups.${cmd} ignored)`, NS);
+            return undefined;
+        }
+
+        const zclStatus =
+            status === Status.SUCCESS ? Zcl.Status.SUCCESS : status === Status.NO_SPACE ? Zcl.Status.INSUFFICIENT_SPACE : Zcl.Status.INVALID_VALUE;
+
+        if (rsp === undefined || zclFrame.command.response === undefined) {
+            if (zclStatus !== Zcl.Status.SUCCESS) {
+                throw new Zcl.StatusError(zclStatus);
+            }
+
+            return undefined;
+        }
+
+        const frame = Zcl.Frame.create(
+            Zcl.FrameType.SPECIFIC,
+            Zcl.Direction.SERVER_TO_CLIENT,
+            true,
+            undefined,
+            zclFrame.header.transactionSequenceNumber,
+            rsp,
+            zclFrame.cluster.ID,
+            {status: zclStatus, groupid: groupId},
+            {},
+        );
+        const data = frame.toBuffer();
+
+        return {
+            clusterID: zclFrame.cluster.ID,
+            address: ZSpec.COORDINATOR_ADDRESS,
+            header: Zcl.Header.fromBuffer(data),
+            data,
+            endpoint,
+            linkquality: 0xff,
+            groupID: 0,
+            wasBroadcast: false,
+            destinationEndpoint: endpoint,
+        };
     }
 
     private notePermit(seconds: number): void {
         this.permitUntil = seconds > 0 ? Date.now() + seconds * 1000 : undefined;
     }
 
+    /** All pages (16 entries each) of a DIAG table, or `undefined` when the NCP lacks the command. */
+    private async diagTable<E>(
+        msgId: number,
+        reqCodec: Codec<{start: number}>,
+        rspCodec: Codec<{total: number; entries: E[]}>,
+    ): Promise<E[] | undefined> {
+        const all: E[] = [];
+
+        for (let page = 0; page < 16; page++) {
+            const rsp = await this.optional(msgId, reqCodec, {start: all.length}, rspCodec);
+
+            if (rsp === undefined) {
+                return page === 0 ? undefined : all;
+            }
+
+            all.push(...rsp.entries);
+
+            if (rsp.entries.length === 0 || all.length >= rsp.total || all.length >= 0xff) {
+                break;
+            }
+        }
+
+        return all;
+    }
+
     private localZdoContext(): Parameters<typeof localZdoResponse>[0] {
         const neighbors = async (): Promise<
             {ieee: Buffer; nwk: number; deviceType: number; rxOn: number; relationship: number; lqi: number}[] | undefined
         > => {
-            const rsp = await this.optional(M.Id.DIAG_GET_NEIGHBORS, M.DiagGetNeighborsReq, {start: 0}, M.DiagGetNeighborsRsp);
+            const table = await this.diagTable(M.Id.DIAG_GET_NEIGHBORS, M.DiagGetNeighborsReq, M.DiagGetNeighborsRsp);
 
-            return rsp?.entries?.map((e) => ({
+            if (table === undefined) {
+                return undefined;
+            }
+
+            const out = table.map((e) => ({
                 ieee: e.ieee,
                 nwk: e.nwk,
                 deviceType: e.deviceType,
@@ -1382,11 +1628,28 @@ export class ZrhpAdapter extends Adapter {
                 relationship: e.relationship,
                 lqi: e.lqi,
             }));
-        };
-        const routes = async (): Promise<{dst: number; nextHop: number; status: number}[] | undefined> => {
-            const rsp = await this.optional(M.Id.DIAG_GET_ROUTES, M.DiagGetRoutesReq, {start: 0}, M.DiagGetRoutesRsp);
+            // children that aged out of the neighbour table still belong to the map
+            const children = (await this.diagTable(M.Id.DIAG_GET_CHILDREN, M.DiagGetChildrenReq, M.DiagGetChildrenRsp)) ?? [];
 
-            return rsp?.entries?.map((e) => ({dst: e.dst, nextHop: e.nextHop, status: e.status}));
+            for (const c of children) {
+                if (!out.some((n) => n.nwk === c.nwk || n.ieee.equals(c.ieee))) {
+                    out.push({
+                        ieee: c.ieee,
+                        nwk: c.nwk,
+                        deviceType: c.capability & 0x02 ? 1 : 2,
+                        rxOn: c.capability & 0x08 ? 1 : 0,
+                        relationship: 1,
+                        lqi: 0,
+                    });
+                }
+            }
+
+            return out;
+        };
+        const routes = async (): Promise<{dst: number; nextHop: number; status: number; flags: number}[] | undefined> => {
+            const table = await this.diagTable(M.Id.DIAG_GET_ROUTES, M.DiagGetRoutesReq, M.DiagGetRoutesRsp);
+
+            return table?.map((e) => ({dst: e.dst, nextHop: e.nextHop, status: e.status, flags: e.flags}));
         };
 
         return {
@@ -1435,6 +1698,10 @@ export class ZrhpAdapter extends Adapter {
         profileId?: number,
     ): Promise<ZclPayload | undefined> {
         if (networkAddress === ZSpec.COORDINATOR_ADDRESS) {
+            if (zclFrame.cluster.ID === Zcl.Clusters.genGroups.ID && zclFrame.header.isSpecific) {
+                return await this.queue.execute(async () => await this.coordinatorGroupCommand(endpoint, zclFrame));
+            }
+
             logger.debug(`~x~> [ZCL clusterId=${zclFrame.cluster.ID} destEp=${endpoint}] Not sending to the coordinator itself`, NS);
             return undefined;
         }
@@ -1506,6 +1773,15 @@ export class ZrhpAdapter extends Adapter {
 
     public async sendZclFrameToGroup(groupID: number, zclFrame: Zcl.Frame, sourceEndpoint?: number, profileId?: number): Promise<void> {
         await this.queue.execute<void>(async () => {
+            if (!this.triedGroups.has(groupID) && !this.coordinatorGroups.has(groupID) && !DEFAULT_GROUPS.includes(groupID)) {
+                // as ember: the coordinator joins groups it controls, so devices answering by groupcast reach herdsman
+                this.triedGroups.add(groupID);
+
+                if ((await this.groupMembership(1, groupID, HOST_ENDPOINTS[0].endpoint)) === Status.SUCCESS) {
+                    this.coordinatorGroups.add(groupID);
+                }
+            }
+
             await this.sendAps(
                 M.apsDataRequest({
                     dstMode: AddrMode.GROUP,
@@ -1609,6 +1885,12 @@ export class ZrhpAdapter extends Adapter {
                 const ev = body as StructOf<typeof M.EvtDeviceLeft.fields>;
                 const known = !ev.ieee.equals(Buffer.alloc(8));
                 this.emit("deviceLeave", known ? {networkAddress: ev.nwk, ieeeAddr: hexBE(ev.ieee)} : {networkAddress: ev.nwk});
+                break;
+            }
+            case M.Id.EVT_CHANNEL_CHANGED: {
+                const ev = body as StructOf<typeof M.EvtChannelChanged.fields>;
+                logger.info(`NCP radio on channel ${ev.channel} (nwk update id ${ev.nwkUpdateId})`, NS);
+                this.channelWaiter?.(ev);
                 break;
             }
             case M.Id.EVT_FC_CHECKPOINT: {

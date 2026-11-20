@@ -3,9 +3,9 @@
 import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
-import {afterEach, describe, expect, it} from "vitest";
+import {afterEach, describe, expect, it, vi} from "vitest";
 import {ZrhpAdapter, type ZrhpConfig} from "../../../src/adapter/zrhp/adapter/zrhpAdapter";
-import {NcpCaps} from "../../../src/adapter/zrhp/consts";
+import {Capacity, NcpCaps} from "../../../src/adapter/zrhp/consts";
 import * as M from "../../../src/adapter/zrhp/messages";
 import {BackupUtils} from "../../../src/utils";
 import * as ZSpec from "../../../src/zspec";
@@ -244,6 +244,89 @@ describe.runIf(NCP_SIM)("ZRHP adapter against the Rust NCP simulator", () => {
         expect((await d.getNetworkParameters()).panID).toStrictEqual(0x3333);
         await d.stop();
     }, 60_000);
+
+    it("uses the NCP host-gap commands: response budget, BUSY, groups, DIAG, install codes, channel change, restore while up", async (ctx) => {
+        rig = new Rig();
+        const h = rig.holder();
+        const a = rig.adapter(h);
+        expect(await a.start()).toStrictEqual("reset");
+        const advertised = a.api.session?.capacity(Capacity.HOST_RESPONSE_BYTES);
+
+        if (!advertised) {
+            // a simulator from before ncp-host-gaps
+            ctx.skip();
+        }
+
+        expect(a.api.responseBudget).toStrictEqual(Math.min(1024, advertised as number));
+        // many large requests at once: never dropped, BUSY (if any) retried, all answered
+        const echoes = await Promise.all(
+            Array.from({length: 100}, async (_, i) => {
+                const [, rsp] = await a.api.request(M.Id.SYS_ECHO, M.SysEchoReq, {data: Buffer.alloc(64, i)}, M.SysEchoRsp, {timeout: 30_000});
+                return rsp?.data.equals(Buffer.alloc(64, i));
+            }),
+        );
+        expect(echoes.every(Boolean)).toStrictEqual(true);
+
+        // the coordinator joins a group the way herdsman's Endpoint.addToGroup asks for it
+        const add = Zcl.Frame.create(
+            Zcl.FrameType.SPECIFIC,
+            Zcl.Direction.CLIENT_TO_SERVER,
+            false,
+            undefined,
+            4,
+            "add",
+            "genGroups",
+            {groupid: 0x1234, groupname: ""},
+            {},
+        );
+        const rsp = await a.sendZclFrameToEndpoint(SIM_IEEE, 0, 1, add, 5000, false, false);
+        expect(Zcl.Frame.fromBuffer(rsp?.clusterID as number, rsp?.header, rsp?.data as Buffer, {}).payload).toStrictEqual({
+            status: Zcl.Status.SUCCESS,
+            groupid: 0x1234,
+        });
+        const [bad] = await a.api.request(M.Id.NWK_GROUP_MEMBERSHIP, M.NwkGroupMembershipReq, {op: 1, group: 1, ep: 241}, undefined, {
+            allow: [0, 0x03],
+        });
+        expect(bad).toStrictEqual(0x03); // INVALID_PARAMETER: endpoint 241
+
+        // Mgmt_Lqi / Mgmt_Rtg of the coordinator from DIAG_GET_*
+        for (const clusterId of [Zdo.ClusterId.LQI_TABLE_REQUEST, Zdo.ClusterId.ROUTING_TABLE_REQUEST] as const) {
+            const table = await a.sendZdo(SIM_IEEE, 0, clusterId, Zdo.Buffalo.buildRequest(true, clusterId, 0), false);
+            expect(table[0]).toStrictEqual(Zdo.Status.SUCCESS);
+        }
+
+        // install code through SEC_ADD_INSTALL_CODE (no TBL_PUSH fallback)
+        const request = vi.spyOn(a.api, "request");
+        await a.addInstallCode("0x0102030405060708", Buffer.from("83FED3407A939723A5C639B26916D505C3B5", "hex"), false);
+        expect(request.mock.calls.map((c) => c[0])).toContain(M.Id.SEC_ADD_INSTALL_CODE);
+        expect(request.mock.calls.map((c) => c[0])).not.toContain(M.Id.TBL_PUSH);
+
+        // channel change: answered at once, EVT_CHANNEL_CHANGED after nwkNetworkBroadcastDeliveryTime
+        const t0 = Date.now();
+        const upd = Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.NWK_UPDATE_REQUEST, [20], 0xfe, undefined, 1, undefined);
+        await a.sendZdo(ZSpec.BLANK_EUI64, ZSpec.BroadcastAddress.SLEEPY, Zdo.ClusterId.NWK_UPDATE_REQUEST, upd, true);
+        expect(Date.now() - t0).toBeGreaterThan(5000);
+        expect(await a.getNetworkParameters()).toMatchObject({channel: 20, nwkUpdateID: 1});
+        const ocb = await rig.writeBackup(a);
+        expect(ocb.channel).toStrictEqual(20);
+        await a.stop();
+
+        // restore onto the NCP while another network runs on it: BEGIN with the network up, COMMIT replaces it
+        const b = rig.adapter(h, netOpts(0x3333));
+        rmSync(rig.backupPath);
+        expect(await b.start()).toStrictEqual("reset");
+        await b.stop();
+        writeFileSync(rig.backupPath, JSON.stringify(ocb));
+        const c = rig.adapter(h, netOpts(0x1a62, 20));
+        const cRequest = vi.spyOn(c.api, "request");
+        expect(await c.start()).toStrictEqual("restored");
+        expect(cRequest.mock.calls.map((x) => x[0])).not.toContain(M.Id.NWK_LEAVE_RESET);
+        expect(await c.getNetworkParameters()).toMatchObject({panID: 0x1a62, channel: 20});
+        // the group membership came back with the restore (persisted with the APS tables) or the replay
+        const again = await c.sendZclFrameToEndpoint(SIM_IEEE, 0, 1, add, 5000, false, false);
+        expect(again?.data).toBeDefined();
+        await c.stop();
+    }, 90_000);
 
     it("survives a noisy line (bit errors in both directions)", async () => {
         rig = new Rig();

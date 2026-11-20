@@ -125,6 +125,8 @@ export enum Capacity {
     GP_PROXY_TABLE = 16,
     MAX_NCP_REQUESTS = 17,
     MAX_TC_DEVICES = 18,
+    /** response bytes a host may keep outstanding per endpoint (5.10) */
+    HOST_RESPONSE_BYTES = 19,
 }
 
 /** `EVT_NCP_READY.network_state` / `NWK_GET_INFO.state`. */

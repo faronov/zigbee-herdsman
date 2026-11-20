@@ -10,7 +10,7 @@ import {randomInt} from "node:crypto";
 import {logger} from "../../utils/logger";
 import type {Codec, StructOf} from "./codec";
 import {CodecError, encodeWith} from "./codec";
-import {type Capacity, HostCaps, Kind, LinkEndpoint, Status, statusName} from "./consts";
+import {Capacity, HostCaps, Kind, LinkEndpoint, Status, statusName} from "./consts";
 import {type ByteStream, LinkDriver} from "./driver";
 import {ResetReason} from "./frame";
 import {type LinkConfig, LinkConfigs, type LinkEvent, PeerChange, TxFailure} from "./link";
@@ -28,6 +28,8 @@ export const HOST_CAPS = HostCaps.FC_CHECKPOINTS | HostCaps.RETRY_CACHE;
  */
 export const RESPONSE_BUDGET = 1024;
 const DEFAULT_RESPONSE = 48;
+/** Backoff of a request answered `BUSY` (the NCP had no room for its response, 5.10): retried after these delays. */
+export const BUSY_RETRY_DELAYS_MS = [20, 50, 100, 200, 400, 800, 1000, 1000, 1000, 1000];
 
 function expectedResponse(msgId: number, payload: Buffer): number {
     switch (msgId) {
@@ -35,6 +37,10 @@ function expectedResponse(msgId: number, payload: Buffer): number {
             return 8 + payload.length;
         case M.Id.BKP_EXPORT_READ:
             return payload.length >= 4 ? 10 + payload.readUInt16LE(2) : DEFAULT_RESPONSE;
+        case M.Id.SYS_GET_INFO:
+        case M.Id.BKP_RESTORE_PUT:
+        case M.Id.TBL_PUSH:
+            return 128;
         case M.Id.DIAG_GET_COUNTERS:
         case M.Id.TBL_READ:
         case M.Id.GP_SINK_TABLE_READ:
@@ -53,7 +59,7 @@ function expectedResponse(msgId: number, payload: Buffer): number {
 
 /** A weighted semaphore. */
 class Budget {
-    readonly capacity: number;
+    capacity: number;
     used = 0;
     readonly #waiters: {weight: number; resolve: () => void}[] = [];
 
@@ -90,6 +96,12 @@ class Budget {
         });
 
         return w;
+    }
+
+    /** Change the capacity (a new session advertised another budget); waiters are re-checked. */
+    resize(capacity: number): void {
+        this.capacity = capacity;
+        this.release(0);
     }
 
     release(weight: number): void {
@@ -176,8 +188,10 @@ export interface RequestOptions {
     waitSession?: number;
     /** may be re-sent with RETRY after a resync (6.5) */
     retry?: boolean;
-    /** called with the TID right before the request is queued */
+    /** called with the TID right before the request is queued (again for every BUSY retry) */
     onSent?: (tid: number) => void;
+    /** retry with backoff while the NCP answers `BUSY` (default true) */
+    busyRetry?: boolean;
 }
 
 export interface ZrhpApiOptions {
@@ -215,7 +229,8 @@ export class ZrhpApi {
     #closing = false;
     #hostCookieChanged = false;
     readonly #budgets = new Map<LinkEndpoint, Budget>();
-    readonly counters = {msgBadBatch: 0, protocolErrors: 0, retriesAfterResync: 0, lostAfterRestart: 0, portReopened: 0};
+    readonly counters = {msgBadBatch: 0, protocolErrors: 0, retriesAfterResync: 0, lostAfterRestart: 0, portReopened: 0, busyRetries: 0};
+    #responseBudget = RESPONSE_BUDGET;
 
     constructor(options: ZrhpApiOptions = {}) {
         this.#linkConfig = options.linkConfig ?? LinkConfigs.desktopHost();
@@ -393,10 +408,42 @@ export class ZrhpApi {
             await this.waitReady(options.waitSession ?? 30_000);
         }
 
+        const delays = options.busyRetry === false ? [] : BUSY_RETRY_DELAYS_MS;
+
+        for (let i = 0; ; i++) {
+            const raw = await this.attempt(msgId, endpoint, payload, timeout, options);
+
+            if (raw[0] !== Status.BUSY || i >= delays.length) {
+                if (raw[0] === Status.BUSY && delays.length > 0) {
+                    logger.debug(`${M.nameOf(msgId)} still BUSY after ${delays.length} retries`, NS);
+                }
+
+                return raw;
+            }
+
+            this.counters.busyRetries++;
+            await new Promise((r) => setTimeout(r, delays[i]));
+        }
+    }
+
+    /** The response budget per endpoint: min(own, capacity 19 `host_response_bytes`) (5.10). */
+    get responseBudget(): number {
+        return this.#responseBudget;
+    }
+
+    private applyResponseBudget(advertised: number | undefined): void {
+        this.#responseBudget = advertised ? Math.min(RESPONSE_BUDGET, advertised) : RESPONSE_BUDGET;
+
+        for (const b of this.#budgets.values()) {
+            b.resize(this.#responseBudget);
+        }
+    }
+
+    private async attempt(msgId: number, endpoint: LinkEndpoint, payload: Buffer, timeout: number, options: RequestOptions): Promise<Buffer> {
         let budget = this.#budgets.get(endpoint);
 
         if (!budget) {
-            budget = new Budget(RESPONSE_BUDGET);
+            budget = new Budget(this.#responseBudget);
             this.#budgets.set(endpoint, budget);
         }
 
@@ -746,6 +793,7 @@ export class ZrhpApi {
 
         this.lastNcpCookie = ready.ncpCookie;
         this.session = new SessionInfo(ready, rsp, change);
+        this.applyResponseBudget(this.session.capacity(Capacity.HOST_RESPONSE_BYTES));
         this.#pendingChange = PeerChange.NEW;
         this.resolveUnknown(change);
         this.#ready = true;

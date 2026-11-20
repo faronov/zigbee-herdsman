@@ -31,7 +31,14 @@ export interface Route {
     dst: number;
     nextHop: number;
     status: number;
+    /** DIAG_GET_ROUTES flags: bit1 many-to-one, bit2 route record required */
+    flags?: number;
 }
+
+/** Mgmt_Lqi_rsp entries per page (as a real coordinator: 3 × 22 bytes fit the ASDU). */
+export const LQI_PAGE = 3;
+/** Mgmt_Rtg_rsp entries per page. */
+export const RTG_PAGE = 10;
 
 export interface LocalZdoContext {
     /** on-air order */
@@ -116,14 +123,14 @@ export async function localZdoResponse(ctx: LocalZdoContext, clusterId: number, 
         case Zdo.ClusterId.LQI_TABLE_REQUEST: {
             const start = request[1] ?? 0;
             const all = (await ctx.neighbors()) ?? [];
-            const page = all.slice(start, start + 2);
+            const page = all.slice(start, start + LQI_PAGE);
             const entries = page.flatMap((n) => [
                 ...ctx.extPanId,
                 ...n.ieee,
                 ...u16(n.nwk),
                 (n.deviceType & 0x03) | ((n.rxOn & 0x03) << 2) | ((n.relationship & 0x07) << 4),
                 0x02, // permit joining unknown
-                n.deviceType === 0 ? 0 : 1, // depth
+                n.relationship === 0 ? 0 : 1, // depth (neighbours of the coordinator: its parent is unknown)
                 n.lqi,
             ]);
 
@@ -132,8 +139,12 @@ export async function localZdoResponse(ctx: LocalZdoContext, clusterId: number, 
         case Zdo.ClusterId.ROUTING_TABLE_REQUEST: {
             const start = request[1] ?? 0;
             const all = (await ctx.routes()) ?? [];
-            const page = all.slice(start, start + 10);
-            const entries = page.flatMap((r) => [...u16(r.dst), r.status & 0x07, ...u16(r.nextHop)]);
+            const page = all.slice(start, start + RTG_PAGE);
+            const entries = page.flatMap((r) => [
+                ...u16(r.dst),
+                (r.status & 0x07) | ((r.flags ?? 0) & 0x02 ? 0x10 : 0) | ((r.flags ?? 0) & 0x04 ? 0x20 : 0),
+                ...u16(r.nextHop),
+            ]);
 
             return Buffer.from([tsn, status, all.length, start, page.length, ...entries]);
         }
