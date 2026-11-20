@@ -73,6 +73,8 @@ export interface ZrhpConfig {
     hardResetOnFailure: boolean;
     /** `SEC_LOCK_KEY_EXPORT` after every backup (backups then become incomplete until the NCP reboots) */
     lockKeyExport: boolean;
+    /** wait for `EVT_CHANNEL_CHANGED`, sent `nwkNetworkBroadcastDeliveryTime` (9 s) after `NWK_CHANGE_CHANNEL` (ms) */
+    channelChangeTimeoutMs: number;
 }
 
 export const DEFAULT_CONFIG: Readonly<ZrhpConfig> = {
@@ -82,6 +84,7 @@ export const DEFAULT_CONFIG: Readonly<ZrhpConfig> = {
     baudrateFallback: true,
     hardResetOnFailure: true,
     lockKeyExport: false,
+    channelChangeTimeoutMs: 20_000,
 };
 
 /** The byte transport used by the adapter (the herdsman serial port, or a test stream). */
@@ -140,8 +143,6 @@ function storedIdentity(info: NwkInfo): boolean {
 
 /** Groups of the coordinator endpoint 1 set up at every start (as ember: 0 and Z2M's default bind group 901). */
 const DEFAULT_GROUPS = [0x0000, 901];
-/** `EVT_CHANNEL_CHANGED` comes `nwkNetworkBroadcastDeliveryTime` (9 s) after the answer. */
-const CHANNEL_CHANGE_WAIT_MS = 20_000;
 
 /** big-endian `0x…` string of on-air bytes */
 function hexBE(onAir: Buffer): string {
@@ -1441,7 +1442,7 @@ export class ZrhpAdapter extends Adapter {
             const timer = setTimeout(() => {
                 settle = undefined;
                 resolve(undefined);
-            }, CHANNEL_CHANGE_WAIT_MS);
+            }, this.config.channelChangeTimeoutMs);
             settle = (ev) => {
                 if (tids.has(ev.reqTid)) {
                     clearTimeout(timer);
@@ -1472,11 +1473,16 @@ export class ZrhpAdapter extends Adapter {
         const ev = await changed;
         this.channelWaiter = undefined;
 
+        const info = await this.getInfo();
+
         if (ev === undefined) {
+            if (info.channel === channel) {
+                logger.warning(`NCP is on channel ${channel} but sent no EVT_CHANNEL_CHANGED`, NS);
+                return;
+            }
+
             throw new Error(`NCP did not report the move to channel ${channel} (EVT_CHANNEL_CHANGED)`);
         }
-
-        await this.getInfo();
 
         if (ev.channel !== channel) {
             // the NV already holds the new channel: a reboot of the NCP completes the move

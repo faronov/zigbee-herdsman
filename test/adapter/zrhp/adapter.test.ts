@@ -29,6 +29,7 @@ const CONFIG: Partial<ZrhpConfig> = {
     hardResetOnFailure: false,
     baudrateFallback: false,
     confirmTimeoutMs: 1000,
+    channelChangeTimeoutMs: 300,
 };
 
 async function until(pred: () => boolean, ms = 5000): Promise<void> {
@@ -388,6 +389,12 @@ describe("ZRHP adapter against a scriptable NCP", () => {
         const upd2 = Zdo.Buffalo.buildRequest(true, Zdo.ClusterId.NWK_UPDATE_REQUEST, [20], 0xfe, undefined, 2, undefined);
         await expect(adapter.sendZdo(ZSpec.BLANK_EUI64, 0xffff, Zdo.ClusterId.NWK_UPDATE_REQUEST, upd2, true)).rejects.toThrow(
             "stayed on channel 15",
+        );
+        // no event: fine if the NCP is on the channel, an error otherwise
+        ncp.overrides.set(M.Id.NWK_CHANGE_CHANNEL, () => Buffer.from([0]));
+        await adapter.sendZdo(ZSpec.BLANK_EUI64, 0xffff, Zdo.ClusterId.NWK_UPDATE_REQUEST, upd, true);
+        await expect(adapter.sendZdo(ZSpec.BLANK_EUI64, 0xffff, Zdo.ClusterId.NWK_UPDATE_REQUEST, upd2, true)).rejects.toThrow(
+            "did not report the move to channel 20",
         );
         // coordinator: power descriptor, IEEE_addr, unknown request, routes (DIAG unsupported -> empty)
         const coord = "0x8877665544332211";
