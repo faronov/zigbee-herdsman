@@ -20,12 +20,14 @@ export const toUnifiedBackup = (backup: Models.Backup): Models.UnifiedBackupStor
             version: 1,
             source: `${packageInfo.name}@${packageInfo.version}`,
             internal: {
+                ...backup.internal,
                 date: new Date().toISOString(),
                 ...(backup.znp ? {znpVersion: backup.znp?.version ?? undefined} : /* v8 ignore next */ undefined),
                 ...(backup.ezsp ? {ezspVersion: backup.ezsp?.version ?? undefined} : /* v8 ignore next */ undefined),
             },
         },
         stack_specific: {
+            ...backup.stackSpecific,
             /* v8 ignore next */
             ...(backup.znp ? {zstack: {tclk_seed: backup.znp?.trustCenterLinkKeySeed?.toString("hex") || undefined}} : undefined),
             ...(backup.ezsp ? {ezsp: {hashed_tclk: backup.ezsp?.hashed_tclk?.toString("hex") || undefined}} : /* v8 ignore next */ undefined),
@@ -62,6 +64,9 @@ export const toUnifiedBackup = (backup: Models.Backup): Models.UnifiedBackupStor
  */
 export const fromUnifiedBackup = (backup: Models.UnifiedBackupStorage): Models.Backup => {
     const tclkSeedString = backup.stack_specific?.zstack?.tclk_seed || undefined;
+    // sections and keys herdsman does not interpret are passed through (e.g. `stack_specific.zigbee_rs`)
+    const {zstack: _zstack, ezsp: _ezsp, ...stackSpecific} = backup.stack_specific ?? {};
+    const {date: _date, znpVersion: _znpVersion, ezspVersion: _ezspVersion, ...internal} = backup.metadata.internal ?? {};
 
     return {
         networkOptions: {
@@ -95,6 +100,8 @@ export const fromUnifiedBackup = (backup: Models.UnifiedBackupStorage): Models.B
             version: backup.metadata.internal?.ezspVersion || undefined,
             hashed_tclk: backup.stack_specific?.ezsp?.hashed_tclk ? Buffer.from(backup.stack_specific.ezsp.hashed_tclk, "hex") : undefined,
         },
+        ...(Object.keys(stackSpecific).length > 0 ? {stackSpecific} : undefined),
+        ...(Object.keys(internal).length > 0 ? {internal} : undefined),
     };
 };
 

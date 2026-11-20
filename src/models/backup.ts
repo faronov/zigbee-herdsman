@@ -34,4 +34,11 @@ export interface Backup {
         version?: number;
         hashed_tclk?: Buffer;
     };
+    /**
+     * `stack_specific` sections other than `zstack`/`ezsp` (for example `zigbee_rs`), passed through unchanged between the
+     * backup file and the adapter.
+     */
+    stackSpecific?: Record<string, unknown>;
+    /** `metadata.internal` keys other than `date`/`znpVersion`/`ezspVersion`, passed through unchanged. */
+    internal?: Record<string, unknown>;
 }

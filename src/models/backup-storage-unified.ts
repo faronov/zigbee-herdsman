@@ -25,6 +25,8 @@ export interface UnifiedBackupStorage {
         ezsp?: {
             hashed_tclk?: string;
         };
+        /** other stacks' sections (for example `zigbee_rs`), passed through */
+        [stack: string]: unknown;
     };
     coordinator_ieee: string;
     pan_id: string;
