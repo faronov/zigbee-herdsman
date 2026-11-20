@@ -1093,7 +1093,7 @@ describe("Adapter", () => {
                         "test.db.backup",
                         {disableLED: false},
                     ),
-                ).rejects.toThrow(`Adapter 'invalid' does not exists, possible options: zstack, ember, deconz, zigate, zboss, zoh, ezsp`);
+                ).rejects.toThrow(`Adapter 'invalid' does not exists, possible options: zstack, ember, deconz, zigate, zboss, zoh, zrhp, ezsp`);
             });
         });
 

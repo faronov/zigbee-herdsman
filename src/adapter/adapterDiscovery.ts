@@ -468,8 +468,8 @@ function matchUsbFingerprint(
 }
 
 export async function matchUsbAdapter(adapter: Adapter, path: string): Promise<UsbAdapterFingerprint | false> {
-    // no point in matching this
-    if (adapter === "zoh") {
+    // no point in matching this; `zrhp`: Espressif's shared USB-Serial-JTAG VID/PID is not a fingerprint (ZRHP spec 11.3)
+    if (adapter === "zoh" || adapter === "zrhp") {
         return false;
     }
 

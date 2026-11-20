@@ -109,6 +109,11 @@ export abstract class Adapter extends events.EventEmitter<AdapterEventMap> {
 
                 return new ZoHAdapter(networkOptions, transportOptions, backupPath, adapterOptions);
             }
+            case "zrhp": {
+                const {ZrhpAdapter} = await import("./zrhp/adapter/zrhpAdapter.js");
+
+                return new ZrhpAdapter(networkOptions, transportOptions, backupPath, adapterOptions);
+            }
             // @deprecated
             case "ezsp": {
                 const {EZSPAdapter} = await import("./ezsp/adapter/ezspAdapter.js");
@@ -116,7 +121,9 @@ export abstract class Adapter extends events.EventEmitter<AdapterEventMap> {
                 return new EZSPAdapter(networkOptions, transportOptions, backupPath, adapterOptions);
             }
             default: {
-                throw new Error(`Adapter '${discovered.adapter}' does not exists, possible options: zstack, ember, deconz, zigate, zboss, zoh, ezsp`);
+                throw new Error(
+                    `Adapter '${discovered.adapter}' does not exists, possible options: zstack, ember, deconz, zigate, zboss, zoh, zrhp, ezsp`,
+                );
             }
         }
     }

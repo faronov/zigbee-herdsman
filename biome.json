@@ -12,7 +12,7 @@
         "bracketSpacing": false
     },
     "files": {
-        "includes": ["**", "!package.json", "!pnpm-lock.yaml", "!CHANGELOG.md", "!!**/dist", "!!**/coverage"]
+        "includes": ["**", "!package.json", "!pnpm-lock.yaml", "!CHANGELOG.md", "!!**/dist", "!!**/coverage", "!test/adapter/zrhp/vectors"]
     },
     "linter": {
         "includes": ["**", "!src/adapter/ezsp/driver/types/**/*"],
