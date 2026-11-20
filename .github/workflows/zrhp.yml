@@ -58,10 +58,10 @@ jobs:
             - uses: actions/download-artifact@v4
               with:
                   name: ncp-sim
-                  path: ncp-sim
-            - run: chmod +x ncp-sim/ncp_sim
+                  path: ${{ runner.temp }}/ncp-sim
+            - run: chmod +x "$RUNNER_TEMP/ncp-sim/ncp_sim"
             - name: Shared vectors are byte-identical to zigbee-rs
-              run: diff -r ncp-sim/vectors test/adapter/zrhp/vectors
+              run: diff -r "$RUNNER_TEMP/ncp-sim/vectors" test/adapter/zrhp/vectors
             - uses: pnpm/action-setup@v6
             - uses: actions/setup-node@v7
               with:
@@ -72,7 +72,7 @@ jobs:
             - run: pnpm run build
             - name: Test (coverage; the Rust simulator tests must run)
               env:
-                  ZRHP_NCP_SIM: ${{ github.workspace }}/ncp-sim/ncp_sim
+                  ZRHP_NCP_SIM: ${{ runner.temp }}/ncp-sim/ncp_sim
                   ZRHP_REQUIRE_SIM: "1"
               run: pnpm run test:coverage -- --testTimeout=10000
 
@@ -85,8 +85,8 @@ jobs:
             - uses: actions/download-artifact@v4
               with:
                   name: ncp-sim
-                  path: ncp-sim
-            - run: chmod +x ncp-sim/ncp_sim
+                  path: ${{ runner.temp }}/ncp-sim
+            - run: chmod +x "$RUNNER_TEMP/ncp-sim/ncp_sim"
             - uses: actions/setup-node@v7
               with:
                   node-version: 24
@@ -95,8 +95,8 @@ jobs:
             - name: Build Zigbee2MQTT with this herdsman commit (scripts/zrhp/build-z2m.sh)
               run: HERDSMAN_DIR="$PWD" Z2M_REF="$Z2M_REF" bash scripts/zrhp/build-z2m.sh "$RUNNER_TEMP/z2m"
             - name: End to end (bare metal)
-              run: bash scripts/zrhp/e2e-z2m-sim.sh "dir:$RUNNER_TEMP/z2m" ncp-sim/ncp_sim
+              run: bash scripts/zrhp/e2e-z2m-sim.sh "dir:$RUNNER_TEMP/z2m" "$RUNNER_TEMP/ncp-sim/ncp_sim"
             - name: Build the Docker image (docker/zrhp-z2m/Dockerfile)
-              run: docker build -t zigbee2mqtt-zrhp --build-arg HERDSMAN_REF=${{ github.sha }} --build-arg Z2M_REF=$Z2M_REF -f docker/zrhp-z2m/Dockerfile .
+              run: docker build -t zigbee2mqtt-zrhp --build-arg "HERDSMAN_REF=${{ github.sha }}" --build-arg "Z2M_REF=$Z2M_REF" -f docker/zrhp-z2m/Dockerfile .
             - name: End to end (Docker image)
-              run: bash scripts/zrhp/e2e-z2m-sim.sh docker:zigbee2mqtt-zrhp ncp-sim/ncp_sim
+              run: bash scripts/zrhp/e2e-z2m-sim.sh docker:zigbee2mqtt-zrhp "$RUNNER_TEMP/ncp-sim/ncp_sim"
