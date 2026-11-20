@@ -14,7 +14,7 @@ ZRHP host protocol ([spec](https://github.com/faronov/zigbee-rs/blob/master/docs
 over USB-Serial-JTAG or UART. It is maintained here only; there is no upstream pull request.
 
 - **Testing it with Zigbee2MQTT** (hardware, firmware download, flashing, Docker or local build, configuration, what to
-  test, what to send back, rollback): **[docs/zrhp-z2m-testing.md](docs/zrhp-z2m-testing.md)**.
+  test, what to send back, rollback): **[docs/zrhp-z2m-testing.md](docs/zrhp-z2m-testing.md)** ([русская версия](docs/zrhp-z2m-testing.ru.md)).
 - Zigbee2MQTT configuration: `serial: {adapter: zrhp, port: <the DevKit's USB port>}`; `baudrate` (default 921 600) and
   `rtscts` only matter on UART.
 - Code: [`src/adapter/zrhp`](src/adapter/zrhp) (link layer, messages, records, OCB backup mapping, adapter),

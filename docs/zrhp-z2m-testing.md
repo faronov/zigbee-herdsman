@@ -1,5 +1,7 @@
 # Testing Zigbee2MQTT on a zigbee-rs NCP (ZRHP)
 
+[Русская версия](zrhp-z2m-testing.ru.md)
+
 This guide is for testers who already run Zigbee2MQTT and want to try the
 [zigbee-rs](https://github.com/faronov/zigbee-rs) network co-processor (NCP) as a Zigbee coordinator. No zigbee-rs or
 Rust knowledge is needed: you flash a ready-made firmware image onto an Espressif DevKit, run a **separate, test-only**
@@ -56,8 +58,7 @@ Debian/Ubuntu, `uucp` on Arch).
 
 ## 2. Get the NCP firmware
 
-The images are built by GitHub Actions in faronov/zigbee-rs (branch `ncp-release-artifacts`, workflow
-"NCP release artifacts"):
+The images are built by GitHub Actions in faronov/zigbee-rs (workflow "NCP release artifacts"):
 
 1. Open <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml> (downloading artifacts needs
    a GitHub login).
