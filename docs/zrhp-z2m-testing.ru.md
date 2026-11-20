@@ -26,11 +26,11 @@ Zigbee2MQTT целиком против симулятора NCP в CI), а са
 
 ## 1. Железо
 
-| Приоритет         | Плата                                                         | Образ прошивки    | Какой порт использовать                                                 |
-| ----------------- | ------------------------------------------------------------- | ----------------- | ----------------------------------------------------------------------- |
-| **1 (основной)**  | ESP32-H2 DevKit (ESP32-H2-DevKitM-1 или похожий, флеш 4 МБ)   | `zrhp-ncp-h2-usj` | разъём USB-C с подписью **USB**                                         |
-| 2                 | ESP32-C6 DevKit (ESP32-C6-DevKitC-1, флеш 4 или 8 МБ)         | `zrhp-ncp-c6-usj` | разъём USB-C с подписью **USB**                                         |
-| дополнительно     | плата Espressif Thread Border Router / Zigbee Gateway         | `zrhp-ncp-h2-br`  | см. [раздел 9](#9-дополнительно-плата-espressif-thread-border-router-uart) |
+| Приоритет        | Плата                                                       | Образ прошивки    | Какой порт использовать                                                    |
+| ---------------- | ----------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------- |
+| **1 (основной)** | ESP32-H2 DevKit (ESP32-H2-DevKitM-1 или похожий, флеш 4 МБ) | `zrhp-ncp-h2-usj` | разъём USB-C с подписью **USB**                                            |
+| 2                | ESP32-C6 DevKit (ESP32-C6-DevKitC-1, флеш 4 или 8 МБ)       | `zrhp-ncp-c6-usj` | разъём USB-C с подписью **USB**                                            |
+| дополнительно    | плата Espressif Thread Border Router / Zigbee Gateway       | `zrhp-ncp-h2-br`  | см. [раздел 9](#9-дополнительно-плата-espressif-thread-border-router-uart) |
 
 Сначала проверяйте **H2**: это чип только для 802.15.4, как и основная цель zigbee-rs. У C6 есть ещё Wi-Fi, который эта
 прошивка не использует.
@@ -46,11 +46,11 @@ Zigbee2MQTT целиком против симулятора NCP в CI), а са
 
 ### Имена последовательных портов
 
-| ОС      | Порт **USB** появляется как                                                                                                                         | Порт UART (не используется)                                                  |
-| ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Linux   | `/dev/ttyACM0`, а лучше `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00` (число в имени — MAC чипа)              | `/dev/ttyUSB0`, `usb-Silicon_Labs_CP2102N…` или `usb-1a86_USB_Single_Serial…` |
-| macOS   | `/dev/cu.usbmodemNNNN` (используйте имя `cu.`, а не `tty.`)                                                                                          | `/dev/cu.usbserial-…`, `/dev/cu.wchusbserial…`                               |
-| Windows | `COMn` — «USB Serial Device (COMn)» в Диспетчере устройств                                                                                           | «Silicon Labs CP210x … (COMn)», «USB-Enhanced-SERIAL CH343 (COMn)»           |
+| ОС      | Порт **USB** появляется как                                                                                                            | Порт UART (не используется)                                                   |
+| ------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Linux   | `/dev/ttyACM0`, а лучше `/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00` (число в имени — MAC чипа) | `/dev/ttyUSB0`, `usb-Silicon_Labs_CP2102N…` или `usb-1a86_USB_Single_Serial…` |
+| macOS   | `/dev/cu.usbmodemNNNN` (используйте имя `cu.`, а не `tty.`)                                                                            | `/dev/cu.usbserial-…`, `/dev/cu.wchusbserial…`                                |
+| Windows | `COMn` — «USB Serial Device (COMn)» в Диспетчере устройств                                                                             | «Silicon Labs CP210x … (COMn)», «USB-Enhanced-SERIAL CH343 (COMn)»            |
 
 В Linux проверьте `ls -l /dev/serial/by-id/` и всегда используйте путь `by-id`: после сброса NCP USB-устройство
 переподключается и может получить другой номер `ttyACM`. Вашему пользователю нужен доступ к порту (группа `dialout` в
@@ -62,18 +62,19 @@ Debian/Ubuntu, `uucp` в Arch).
 
 1. Откройте <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml> (для скачивания
    артефактов нужно войти в GitHub).
-2. Откройте последний зелёный запуск и скачайте артефакт **`zrhp-ncp-images`** (или только `zrhp-ncp-h2-usj` /
-   `zrhp-ncp-c6-usj`). Распакуйте.
+2. Откройте последний зелёный запуск с именем **«NCP images from ncp-host-gaps»** (прошивка со сменой канала, группами
+   координатора и картой сети; после слияния этой ветки берите последний «NCP images from master») и скачайте артефакт
+   **`zrhp-ncp-images`** (или только `zrhp-ncp-h2-usj` / `zrhp-ncp-c6-usj`). Распакуйте.
 
 В папке каждого образа:
 
-| Файл                                    | Адрес во флеше | Что это                                                                                               |
-| --------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------------- |
-| `zrhp-ncp-<target>-merged.bin`          | `0x0`          | **берите его**: полный образ 4 МБ (загрузчик + таблица разделов + приложение, остальное стёрто)      |
-| `zrhp-ncp-<target>-bootloader.bin`      | `0x0`          | загрузчик второй стадии (загрузчик ESP-IDF из комплекта espflash)                                     |
-| `zrhp-ncp-<target>-partition-table.bin` | `0x8000`       | таблица разделов (`esp32h2-ncp-4mb`: два слота приложения и хранилище Zigbee `zbnv`)                  |
-| `zrhp-ncp-<target>-app.bin`             | `0x10000`      | приложение NCP (слот `ota_0`)                                                                         |
-| `FLASHING.txt`, `SHA256SUMS`            |                | коммит zigbee-rs и фичи сборки; контрольные суммы                                                     |
+| Файл                                    | Адрес во флеше | Что это                                                                                         |
+| --------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| `zrhp-ncp-<target>-merged.bin`          | `0x0`          | **берите его**: полный образ 4 МБ (загрузчик + таблица разделов + приложение, остальное стёрто) |
+| `zrhp-ncp-<target>-bootloader.bin`      | `0x0`          | загрузчик второй стадии (загрузчик ESP-IDF из комплекта espflash)                               |
+| `zrhp-ncp-<target>-partition-table.bin` | `0x8000`       | таблица разделов (`esp32h2-ncp-4mb`: два слота приложения и хранилище Zigbee `zbnv`)            |
+| `zrhp-ncp-<target>-app.bin`             | `0x10000`      | приложение NCP (слот `ota_0`)                                                                   |
+| `FLASHING.txt`, `SHA256SUMS`            |                | коммит zigbee-rs и фичи сборки; контрольные суммы                                               |
 
 Проверьте скачанное: `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c SHA256SUMS`).
 
@@ -83,7 +84,7 @@ Debian/Ubuntu, `uucp` в Arch).
 ```bash
 rustup toolchain install nightly-2026-08-01 --component rust-src --target riscv32imac-unknown-none-elf
 cargo install espflash@4.5.0
-git clone https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
+git clone -b ncp-host-gaps https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
 # ESP32-H2 (фичи по умолчанию esp32h2,transport-usj); для C6 добавьте: --no-default-features --features esp32c6,transport-usj
 cargo +nightly-2026-08-01 build --release --locked --bin esp32-ncp -Z build-std=core,alloc
 espflash save-image --chip esp32h2 --flash-size 4mb --merge \
@@ -258,16 +259,21 @@ Zigbee2MQTT started!
    прошейте полный образ (раздел 3), затем запустите Zigbee2MQTT с той же папкой `data`. Ожидается: `Started restored`,
    и устройства продолжают работать **без повторного сопряжения** (спящим датчикам может понадобиться минута или нажатие
    кнопки).
-9. **Карта сети**: запишите, что она показывает (список соседей самого координатора в этой прошивке пуст, см. ниже).
-10. _(необязательно)_ **Устройства Green Power** (Philips Hue Tap, выключатели Friends of Hue, FlowerX GP): разрешите
+9. **Карта сети**: должны быть видны связи координатора с его прямыми соседями и детьми (с LQI).
+10. **Смена канала** (делайте последней): остановите Zigbee2MQTT, поменяйте `advanced.channel` на другой свободный канал
+    (например 20 → 25), запустите снова. Ожидается в логе: `NCP announced the move to channel 25` и примерно через 10 с
+    `NCP radio on channel 25`; устройства с питанием от сети переходят сразу, спящие — после следующего пробуждения (или
+    нажатия кнопки). Запишите, какие устройства не перешли.
+11. _(необязательно)_ **Устройства Green Power** (Philips Hue Tap, выключатели Friends of Hue, FlowerX GP): разрешите
     сопряжение, переведите устройство в режим commissioning, проверьте, что Zigbee2MQTT его создаёт и видит нажатия.
-11. _(необязательно)_ **DevKit на C6**: повторите шаги 1, 2, 6 и 8 с образом для C6.
+12. _(необязательно)_ **DevKit на C6**: повторите шаги 1, 2, 6 и 8 с образом для C6.
 
 ### Известные ограничения этой тестовой сборки
 
-- Смены канала пока нет (`NWK_CHANGE_CHANNEL` в NCP не реализована): не меняйте `channel` после первого запуска;
-  адаптер откажет с понятной ошибкой.
-- Собственные таблицы соседей и маршрутов координатора пока не отдаются (роутеры свои отдают).
+- Прошивка старше `ncp-host-gaps` (например, запуск «NCP images from ncp-release-artifacts»/master до слияния) не умеет
+  менять канал (адаптер откажет с понятной ошибкой), не показывает связи координатора на карте сети и не хранит
+  группы координатора. Используйте образы `ncp-host-gaps`.
+- Мощность передатчика пока не настраивается (`transmit_power` NCP игнорирует).
 - Нет Touchlink / inter-PAN.
 - Install codes и Green Power в адаптере реализованы, но на железе не проверены.
 
