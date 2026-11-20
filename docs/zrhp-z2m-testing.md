@@ -62,8 +62,9 @@ The images are built by GitHub Actions in faronov/zigbee-rs (workflow "NCP relea
 
 1. Open <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml> (downloading artifacts needs
    a GitHub login).
-2. Open the latest green run and download the artifact **`zrhp-ncp-images`** (or only `zrhp-ncp-h2-usj` /
-   `zrhp-ncp-c6-usj`). Unzip it.
+2. Open the latest green run named **"NCP images from ncp-host-gaps"** (the firmware with channel change, coordinator
+   groups and network map; once that branch is merged, take the latest "NCP images from master") and download the
+   artifact **`zrhp-ncp-images`** (or only `zrhp-ncp-h2-usj` / `zrhp-ncp-c6-usj`). Unzip it.
 
 Each image folder contains:
 
@@ -83,7 +84,7 @@ Check the download: `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c SHA256SU
 ```bash
 rustup toolchain install nightly-2026-08-01 --component rust-src --target riscv32imac-unknown-none-elf
 cargo install espflash@4.5.0
-git clone https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
+git clone -b ncp-host-gaps https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
 # ESP32-H2 (default features esp32h2,transport-usj); for the C6 add: --no-default-features --features esp32c6,transport-usj
 cargo +nightly-2026-08-01 build --release --locked --bin esp32-ncp -Z build-std=core,alloc
 espflash save-image --chip esp32h2 --flash-size 4mb --merge \
@@ -255,16 +256,21 @@ Please go through what you can and note for each step: time, what you did, what 
 8. **Restore onto a factory-new NCP** (the important one): with Zigbee2MQTT stopped, `erase-flash` and flash the merged
    image again (section 3), then start Zigbee2MQTT with the same `data` directory. Expected: `Started restored`, and
    the devices keep working **without re-pairing** (sleepy sensors may take a minute or a button press).
-9. **Network map**: note what it shows (the coordinator's own neighbour list is empty in this firmware, see below).
-10. _(optional)_ **Green Power** devices (Philips Hue Tap, Friends of Hue switches, FlowerX GP): permit join, put the
+9. **Network map**: the coordinator's links to its direct neighbours and children should be shown (with LQI).
+10. **Channel change** (do it last): stop Zigbee2MQTT, change `advanced.channel` to another free channel (e.g. 20 → 25),
+    start again. Expected in the log: `NCP announced the move to channel 25` and about 10 s later
+    `NCP radio on channel 25`; mains-powered devices follow at once, sleepy ones after their next wake-up (or a button
+    press). Note which devices did not follow.
+11. _(optional)_ **Green Power** devices (Philips Hue Tap, Friends of Hue switches, FlowerX GP): permit join, put the
     device into commissioning, check that Zigbee2MQTT creates it and sees the button presses.
-11. _(optional)_ **The C6 DevKit**: repeat steps 1, 2, 6 and 8 with the C6 image.
+12. _(optional)_ **The C6 DevKit**: repeat steps 1, 2, 6 and 8 with the C6 image.
 
 ### Known limitations of this test build
 
-- No channel change yet (`NWK_CHANGE_CHANNEL` is not implemented by the NCP): do not change `channel` after the first
-  start; the adapter refuses with an explicit error.
-- The coordinator's own neighbour and routing tables are not reported yet (routers still report theirs).
+- Firmware older than `ncp-host-gaps` (e.g. a run "NCP images from ncp-release-artifacts"/master before the merge)
+  cannot change the channel (the adapter refuses with an explicit error), shows no coordinator links on the network
+  map and keeps no coordinator group memberships. Use the `ncp-host-gaps` images.
+- No transmit power setting yet (`transmit_power` is ignored by the NCP).
 - No Touchlink / inter-PAN.
 - Install codes and Green Power are implemented in the adapter but untested on hardware.
 
