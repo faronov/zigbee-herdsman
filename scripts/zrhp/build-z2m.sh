@@ -35,7 +35,7 @@ fi
     cd "$HERDSMAN"
     $PNPM install --frozen-lockfile
     $PNPM run build
-    $PNPM pack --pack-destination "$WORK" >/dev/null
+    $PNPM pack --ignore-scripts --pack-destination "$WORK" >/dev/null   # built just above
 )
 TGZ="$(ls "$WORK"/zigbee-herdsman-*.tgz)"
 echo "    $(basename "$TGZ") ($(git -C "$HERDSMAN" rev-parse --short HEAD 2>/dev/null || echo local))"

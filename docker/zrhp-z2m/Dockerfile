@@ -7,7 +7,7 @@
 # See docs/zrhp-z2m-testing.md.
 
 FROM node:24-alpine AS build
-RUN apk add --no-cache bash git make gcc g++ python3 linux-headers
+RUN apk add --no-cache bash git make gcc g++ python3 linux-headers && corepack enable
 ARG Z2M_REF=2.14.3
 ARG HERDSMAN_REPO=https://github.com/faronov/zigbee-herdsman.git
 ARG HERDSMAN_REF=zrhp
