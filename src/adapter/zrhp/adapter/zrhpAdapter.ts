@@ -599,7 +599,12 @@ export class ZrhpAdapter extends Adapter {
                 `The NCP cannot take over the backup's coordinator IEEE ${ocb.coordinator_ieee}; restoring with its own IEEE ${hexBE(active)}`,
                 NS,
             );
-            ocb = {...ocb, coordinator_ieee: ieeeText(active)};
+            const internal = ocb.metadata?.internal ?? {};
+            ocb = {
+                ...ocb,
+                coordinator_ieee: ieeeText(active),
+                metadata: {...ocb.metadata, internal: {...internal, network: {...internal.network, tc_address: ieeeText(active)}}},
+            };
             allowIeee = false;
         }
 
