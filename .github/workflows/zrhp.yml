@@ -75,6 +75,15 @@ jobs:
                   ZRHP_NCP_SIM: ${{ runner.temp }}/ncp-sim/ncp_sim
                   ZRHP_REQUIRE_SIM: "1"
               run: pnpm run test:coverage -- --testTimeout=10000
+            - name: ZRHP adapter coverage (src/adapter/zrhp)
+              env:
+                  ZRHP_NCP_SIM: ${{ runner.temp }}/ncp-sim/ncp_sim
+                  ZRHP_REQUIRE_SIM: "1"
+              run: >
+                  pnpm exec vitest run --config ./test/vitest.config.mts test/adapter/zrhp --testTimeout=10000 --coverage
+                  --coverage.include='src/adapter/zrhp/**' --coverage.exclude=nothing --coverage.thresholds.100=false
+                  --coverage.thresholds.lines=88 --coverage.thresholds.statements=88 --coverage.thresholds.functions=88
+                  --coverage.thresholds.branches=80
 
     z2m-e2e:
         name: Zigbee2MQTT on the Rust NCP (bare metal + Docker)

@@ -552,6 +552,35 @@ describe("ZRHP adapter against a scriptable NCP", () => {
         expect(init.nwkFcFloor).toStrictEqual(6144 + 9 * 1024);
     });
 
+    it("herdsman's backup conversion passes unknown sections through and tolerates their absence", () => {
+        const base = {
+            metadata: {format: "zigpy/open-coordinator-backup", version: 1, source: "x"},
+            coordinator_ieee: "0102030405060708",
+            pan_id: "1a2b",
+            extended_pan_id: "dddddddddddddd02",
+            nwk_update_id: 0,
+            security_level: 5,
+            channel: 11,
+            channel_mask: [11],
+            network_key: {key: "00".repeat(16), sequence_number: 0, frame_counter: 0},
+            devices: [],
+        };
+        const bare = BackupUtils.fromUnifiedBackup(base as unknown as Parameters<typeof BackupUtils.fromUnifiedBackup>[0]);
+        expect(bare.stackSpecific).toBeUndefined();
+        expect(bare.internal).toBeUndefined();
+        const full = BackupUtils.fromUnifiedBackup({
+            ...base,
+            metadata: {...base.metadata, internal: {date: "d", ezspVersion: 13, network: {tc_link_key: {frame_counter: 7}}}},
+            stack_specific: {ezsp: {hashed_tclk: "00"}, zigbee_rs: {version: 1}},
+        } as unknown as Parameters<typeof BackupUtils.fromUnifiedBackup>[0]);
+        expect(full.stackSpecific).toStrictEqual({zigbee_rs: {version: 1}});
+        expect(full.internal).toStrictEqual({network: {tc_link_key: {frame_counter: 7}}});
+        const out = BackupUtils.toUnifiedBackup(full);
+        expect(out.stack_specific?.zigbee_rs).toStrictEqual({version: 1});
+        expect(out.metadata.internal.network).toStrictEqual({tc_link_key: {frame_counter: 7}});
+        expect(out.metadata.internal.ezspVersion).toStrictEqual(13);
+    });
+
     it("locks key export after a backup when configured", async () => {
         make({lockKeyExport: true});
         await adapter.start();

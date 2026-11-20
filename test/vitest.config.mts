@@ -13,6 +13,8 @@ export default defineConfig({
             enabled: false,
             provider: "v8",
             include: ["src/**"],
+            // the ZRHP adapter (fork) has its own thresholds: see .github/workflows/zrhp.yml
+            exclude: ["src/adapter/zrhp/**"],
             extension: [".ts"],
             // exclude: [],
             clean: true,
@@ -22,8 +24,6 @@ export default defineConfig({
             reportOnFailure: false,
             thresholds: {
                 100: true,
-                // ZRHP adapter (fork): the Rust NCP simulator tests only run where ZRHP_NCP_SIM is set (zrhp workflow)
-                "src/adapter/zrhp/**": {lines: 85, statements: 85, functions: 85, branches: 70},
             },
         },
     },
