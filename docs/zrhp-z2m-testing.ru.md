@@ -60,8 +60,8 @@ Debian/Ubuntu, `uucp` в Arch).
 
 Образы собирает GitHub Actions в faronov/zigbee-rs (workflow «NCP release artifacts»):
 
-1. Откройте <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml> (для скачивания
-   артефактов нужно войти в GitHub).
+1. Откройте <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml?query=branch%3Amaster+is%3Asuccess>
+   (только зелёные запуски на `master`, новые сверху; для скачивания артефактов нужно войти в GitHub).
 2. Откройте последний зелёный (✓) запуск **«NCP release artifacts»** на ветке **`master`** (zigbee-rs `c18875b` или
    новее: смена канала, группы координатора и карта сети; коммит указан в `FLASHING.txt`) и скачайте артефакт
    **`zrhp-ncp-images`** (или только `zrhp-ncp-h2-usj` / `zrhp-ncp-c6-usj`). Распакуйте.

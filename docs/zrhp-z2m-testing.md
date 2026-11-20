@@ -60,8 +60,8 @@ Debian/Ubuntu, `uucp` on Arch).
 
 The images are built by GitHub Actions in faronov/zigbee-rs (workflow "NCP release artifacts"):
 
-1. Open <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml> (downloading artifacts needs
-   a GitHub login).
+1. Open <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml?query=branch%3Amaster+is%3Asuccess>
+   (only green runs on `master`, newest first; downloading artifacts needs a GitHub login).
 2. Open the latest green (✓) run of **"NCP release artifacts"** on branch **`master`** (zigbee-rs `c18875b` or newer:
    channel change, coordinator groups and network map; `FLASHING.txt` names the commit) and download the
    artifact **`zrhp-ncp-images`** (or only `zrhp-ncp-h2-usj` / `zrhp-ncp-c6-usj`). Unzip it.
