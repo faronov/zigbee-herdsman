@@ -124,11 +124,84 @@ macOS: `PORT=/dev/cu.usbmodemNNNN`; Windows: `--port COM5`.
   the firmware later while _keeping_ the test network, write only the application:
   `esptool --chip esp32h2 --port "$PORT" write-flash 0x10000 zrhp-ncp-h2-usj-app.bin`.
 
-## 4. Build Zigbee2MQTT with the ZRHP herdsman
+## 4. Install Zigbee2MQTT with the ZRHP adapter
 
-Stock Zigbee2MQTT does not know `adapter: zrhp`; you need Zigbee2MQTT with zigbee-herdsman from
-[faronov/zigbee-herdsman, branch `zrhp`](https://github.com/faronov/zigbee-herdsman/tree/zrhp). Two ways — both are
-built and run end to end in CI against the zigbee-rs NCP simulator (`.github/workflows/zrhp.yml`).
+Stock Zigbee2MQTT cannot run this NCP for two reasons:
+
+1. its zigbee-herdsman has no ZRHP adapter, and
+2. its settings schema allows only `deconz`, `zstack`, `zigate`, `ezsp`, `ember`, `zboss` and `zoh` for
+   `serial.adapter`, so `adapter: zrhp` stops it at start with
+   `serial/adapter must be equal to one of the allowed values`.
+
+The Zigbee2MQTT fork [faronov/zigbee2mqtt, branch `zrhp`](https://github.com/faronov/zigbee2mqtt/tree/zrhp) fixes both:
+Zigbee2MQTT 2.14.3 with `zrhp` in the schema and zigbee-herdsman pinned to a build of this fork. Its CI installs it on
+Linux and Windows and runs it end to end on the NCP simulator. **Use it (option W) unless you need Docker.**
+
+### Option W — the Zigbee2MQTT fork (Windows, Linux, macOS) — recommended
+
+Needs [Node.js 22 or 24 LTS](https://nodejs.org/) and [Git](https://git-scm.com/) (Windows: "Git for Windows"). No C++
+toolchain: the serial port module ships prebuilt binaries. On Windows use **Command Prompt** (`cmd`), or PowerShell after
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (PowerShell blocks the `pnpm.ps1` shim by default).
+
+```bat
+npm install -g pnpm@11.26.0
+git clone -b zrhp https://github.com/faronov/zigbee2mqtt.git C:\z2m-zrhp
+cd C:\z2m-zrhp
+pnpm install --frozen-lockfile
+pnpm run build
+```
+
+Put `configuration.yaml` (section 5) into a **new, empty** data directory, e.g. `C:\z2m-zrhp-data`, and start:
+
+```bat
+set ZIGBEE2MQTT_DATA=C:\z2m-zrhp-data
+pnpm start
+```
+
+(PowerShell: `$env:ZIGBEE2MQTT_DATA="C:\z2m-zrhp-data"; pnpm start`; Linux/macOS:
+`ZIGBEE2MQTT_DATA=~/z2m-zrhp-test/data pnpm start`.) The log shows `zigbee-herdsman` with a version ending in
+`-zrhp.<n>` and `Coordinator firmware version: '{"meta":{…},"type":"zigbee-rs ZRHP"}'`.
+
+Update later: `git pull`, then `pnpm install --frozen-lockfile` and `pnpm run build` again.
+
+Do **not** run this from the folder of your production Zigbee2MQTT, and do not point it at its `data` folder.
+
+### Already have stock Zigbee2MQTT built from source? (interim workaround)
+
+If you replaced zigbee-herdsman in a stock checkout yourself (a pnpm override to this fork) and only the schema
+complains, either
+
+- **leave `adapter` out** of `serial` (keep `port`): this fork's zigbee-herdsman recognises the ESP32 DevKit's
+  **USB** port (USB ID `303a:1001`, see "Auto-detection" below) and selects `zrhp` itself — stock Zigbee2MQTT accepts a
+  configuration without `adapter`; or
+- add `zrhp` to the schema with one line, run in the Zigbee2MQTT folder (`dist` is what runs, `lib` is the source):
+
+  ```bat
+  node -e "const fs=require('fs');for(const f of ['lib/util/settings.schema.json','dist/util/settings.schema.json'])if(fs.existsSync(f))fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/\x22zoh\x22\s*\]/,'\x22zoh\x22, \x22zrhp\x22]'))"
+  ```
+
+  (works unchanged in cmd, PowerShell and bash; running it twice changes nothing.)
+
+  A Zigbee2MQTT update overwrites the files: run it again after updating. The fork needs neither.
+
+Stock Zigbee2MQTT has no setting that accepts an unknown adapter: the schema check runs before anything else, and
+without the ZRHP zigbee-herdsman the adapter would not exist anyway.
+
+### Auto-detection (`adapter` left out)
+
+This fork's zigbee-herdsman selects `zrhp` for a port with USB ID `303a:1001` (Espressif USB-Serial-JTAG: the DevKit's
+**USB** connector), on Linux also by the name `usb-Espressif_USB_JTAG_serial_debug_unit_…`. Limits:
+
+- `303a:1001` is the same for **every** firmware on that connector of an ESP32-C3/C6/H2/S3 (it is built into the chip,
+  the NCP firmware cannot change it). Any ESP32 board on its native USB port is taken for a ZRHP NCP; with several
+  connected, set `port` (and better `adapter: zrhp`) explicitly.
+- The DevKit's **UART** connector (CP2102N / CH343 USB-UART bridge, `10c4:ea60` / `1a86:55d3`) is never detected as
+  ZRHP — the USB-Serial-JTAG images do not speak ZRHP there, and those bridge IDs are shared with Sonoff, SMLIGHT and
+  other dongles (stock detection may even guess `zstack` for a bare CP2102N).
+- The Thread Border Router board (UART, section 9) is not auto-detected: set `adapter: zrhp`, `baudrate` and
+  `rtscts`.
+- Explicit `adapter: zrhp` with `port` is always the most reliable setting (and needs the fork or the schema line
+  above).
 
 ### Option A — Docker (Linux host)
 
@@ -152,13 +225,13 @@ docker run -d --name z2m-zrhp --restart unless-stopped \
 docker logs -f z2m-zrhp
 ```
 
-Docker Desktop on macOS/Windows cannot pass USB devices into containers: use option B there.
+Docker Desktop on macOS/Windows cannot pass USB devices into containers: use option W there.
 
 `--device` is resolved when the container starts. If the NCP resets while the container runs (RESET button, esptool),
 its USB device is re-created and the container can lose it; Zigbee2MQTT then stops after about 20 s and
 `--restart unless-stopped` starts it again with the new device.
 
-### Option B — a local checkout (Linux, macOS; Windows with Git Bash or WSL)
+### Option B — build script on a stock checkout (Linux, macOS; Windows with Git Bash or WSL)
 
 Needs git, Node.js 22 or 24 (corepack is included) and a C/C++ toolchain for the serial port module:
 
@@ -177,9 +250,10 @@ ZIGBEE2MQTT_DATA=~/z2m-zrhp-test/data node index.js
 
 ### Check the NCP before starting Zigbee2MQTT
 
-Both builds contain a small read-only probe (stop Zigbee2MQTT first, only one program can use the port):
+All builds contain a small read-only probe (stop Zigbee2MQTT first, only one program can use the port):
 
 ```bash
+cd C:\z2m-zrhp && node scripts/zrhp-probe.js COM7                                              # option W (Windows)
 cd ~/z2m-zrhp && node .zrhp/probe.js "$PORT"                                                    # option B
 docker run --rm --device "$PORT":/dev/ttyZRHP zigbee2mqtt-zrhp node .zrhp/probe.js /dev/ttyZRHP   # option A
 ```
@@ -202,8 +276,8 @@ mqtt:
     # user: …
     # password: …
 serial:
-    port: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00 # Docker: /dev/ttyZRHP
-    adapter: zrhp
+    port: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00 # Windows: COM7; Docker: /dev/ttyZRHP
+    adapter: zrhp # needs the Zigbee2MQTT fork (or the schema line of section 4); may be left out, see "Auto-detection"
     # baudrate / rtscts: not needed over USB-Serial-JTAG (ignored)
 advanced:
     channel: 20 # a channel your production network does NOT use
@@ -280,10 +354,12 @@ Zip and send (it is a throw-away test network; **never send files of your produc
 
 - the logs: `data/log/<date>/log.log` of every session (`log_level: debug`), or `docker logs z2m-zrhp > z2m.log 2>&1`;
 - `data/coordinator_backup.json`, `data/zrhp_store.jsonl`, `data/database.db`, `data/configuration.yaml`;
-- the probe output (`node .zrhp/probe.js …`, Zigbee2MQTT stopped) before and after the tests;
+- the probe output (`node scripts/zrhp-probe.js …` or `node .zrhp/probe.js …`, Zigbee2MQTT stopped) before and after
+  the tests;
 - `FLASHING.txt` of the image you used, the esptool output (it shows the chip revision, e.g.
   `Chip is ESP32-H2 (revision v0.1)`), the DevKit model;
-- `ls -l /dev/serial/by-id/` (Linux), the OS, and Docker or checkout;
+- `ls -l /dev/serial/by-id/` (Linux), the OS, the install option (W, A or B) and the `zigbee-herdsman` version from the
+  log;
 - your notes per test step and the device models.
 
 ## 8. Rolling back
@@ -291,7 +367,8 @@ Zip and send (it is a throw-away test network; **never send files of your produc
 Your production setup is untouched as long as you followed the safety rules: it keeps its own coordinator, `data`
 directory and container. To finish the test:
 
-1. Stop and remove the test instance: `docker rm -f z2m-zrhp` (option A) or stop `node index.js` (option B).
+1. Stop and remove the test instance: `docker rm -f z2m-zrhp` (option A), or stop `pnpm start` / `node index.js`
+   (Ctrl+C, options W and B) and delete `C:\z2m-zrhp` and `C:\z2m-zrhp-data`.
 2. Factory-reset the test devices and pair them back to your production Zigbee2MQTT.
 3. Optionally wipe the DevKit: `esptool --chip esp32h2 --port "$PORT" erase-flash` (any other firmware can be flashed
    afterwards).

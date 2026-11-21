@@ -124,11 +124,86 @@ macOS: `PORT=/dev/cu.usbmodemNNNN`; Windows: `--port COM5`.
   прошивку и _сохранить_ тестовую сеть, пишите только приложение:
   `esptool --chip esp32h2 --port "$PORT" write-flash 0x10000 zrhp-ncp-h2-usj-app.bin`.
 
-## 4. Сборка Zigbee2MQTT с herdsman для ZRHP
+## 4. Установка Zigbee2MQTT с адаптером ZRHP
 
-Обычный Zigbee2MQTT не знает `adapter: zrhp`; нужен Zigbee2MQTT с zigbee-herdsman из
-[faronov/zigbee-herdsman, ветка `zrhp`](https://github.com/faronov/zigbee-herdsman/tree/zrhp). Два способа — оба
-собираются и проверяются целиком в CI против симулятора NCP zigbee-rs (`.github/workflows/zrhp.yml`).
+Обычный Zigbee2MQTT не может работать с этим NCP по двум причинам:
+
+1. в его zigbee-herdsman нет адаптера ZRHP;
+2. его схема настроек разрешает для `serial.adapter` только `deconz`, `zstack`, `zigate`, `ezsp`, `ember`, `zboss` и
+   `zoh`, поэтому с `adapter: zrhp` он останавливается при запуске с ошибкой
+   `serial/adapter must be equal to one of the allowed values`.
+
+Форк Zigbee2MQTT [faronov/zigbee2mqtt, ветка `zrhp`](https://github.com/faronov/zigbee2mqtt/tree/zrhp) исправляет
+оба пункта: это Zigbee2MQTT 2.14.3 с `zrhp` в схеме и с zigbee-herdsman, закреплённым на сборке этого форка. Его CI
+устанавливает его на Linux и Windows и прогоняет целиком на симуляторе NCP. **Используйте его (способ W), если вам не
+нужен Docker.**
+
+### Способ W — форк Zigbee2MQTT (Windows, Linux, macOS) — рекомендуется
+
+Нужны [Node.js 22 или 24 LTS](https://nodejs.org/) и [Git](https://git-scm.com/) (в Windows — «Git for Windows»).
+Компилятор C++ не нужен: модуль последовательного порта поставляется собранным. В Windows используйте **Командную
+строку** (`cmd`) или PowerShell после `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (по умолчанию PowerShell
+блокирует обёртку `pnpm.ps1`).
+
+```bat
+npm install -g pnpm@11.26.0
+git clone -b zrhp https://github.com/faronov/zigbee2mqtt.git C:\z2m-zrhp
+cd C:\z2m-zrhp
+pnpm install --frozen-lockfile
+pnpm run build
+```
+
+Положите `configuration.yaml` (раздел 5) в **новую, пустую** папку данных, например `C:\z2m-zrhp-data`, и запустите:
+
+```bat
+set ZIGBEE2MQTT_DATA=C:\z2m-zrhp-data
+pnpm start
+```
+
+(PowerShell: `$env:ZIGBEE2MQTT_DATA="C:\z2m-zrhp-data"; pnpm start`; Linux/macOS:
+`ZIGBEE2MQTT_DATA=~/z2m-zrhp-test/data pnpm start`.) В логе версия `zigbee-herdsman` заканчивается на `-zrhp.<n>`, и
+есть `Coordinator firmware version: '{"meta":{…},"type":"zigbee-rs ZRHP"}'`.
+
+Обновление: `git pull`, затем снова `pnpm install --frozen-lockfile` и `pnpm run build`.
+
+**Не** запускайте это из папки рабочего Zigbee2MQTT и не указывайте его папку `data`.
+
+### Уже есть обычный Zigbee2MQTT, собранный из исходников? (временный обход)
+
+Если вы сами заменили zigbee-herdsman в обычной копии (override в pnpm на этот форк) и ругается только схема, то либо
+
+- **уберите `adapter`** из `serial` (оставьте `port`): zigbee-herdsman из этого форка узнаёт порт **USB** у ESP32 DevKit
+  (USB ID `303a:1001`, см. «Автоопределение» ниже) и сам выбирает `zrhp`, а обычный Zigbee2MQTT принимает конфигурацию
+  без `adapter`; либо
+- добавьте `zrhp` в схему одной строкой, выполнив её в папке Zigbee2MQTT (`dist` — то, что запускается, `lib` —
+  исходники):
+
+  ```bat
+  node -e "const fs=require('fs');for(const f of ['lib/util/settings.schema.json','dist/util/settings.schema.json'])if(fs.existsSync(f))fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/\x22zoh\x22\s*\]/,'\x22zoh\x22, \x22zrhp\x22]'))"
+  ```
+
+  (работает без изменений в cmd, PowerShell и bash; повторный запуск ничего не меняет.)
+
+  Обновление Zigbee2MQTT перезаписывает эти файлы: после обновления выполните строку снова. Форку не нужно ни то, ни
+  другое.
+
+В обычном Zigbee2MQTT нет настройки, которая разрешила бы неизвестный адаптер: проверка схемы идёт раньше всего
+остального, а без zigbee-herdsman с ZRHP самого адаптера всё равно не было бы.
+
+### Автоопределение (`adapter` не указан)
+
+zigbee-herdsman из этого форка выбирает `zrhp` для порта с USB ID `303a:1001` (Espressif USB-Serial-JTAG: разъём **USB**
+на DevKit), в Linux ещё и по имени `usb-Espressif_USB_JTAG_serial_debug_unit_…`. Ограничения:
+
+- `303a:1001` одинаков для **любой** прошивки на этом разъёме ESP32-C3/C6/H2/S3 (он встроен в чип, прошивка NCP не может
+  его изменить). Любая плата ESP32 на родном USB-порту будет принята за NCP ZRHP; если подключено несколько, укажите
+  `port` (а лучше и `adapter: zrhp`) явно.
+- Разъём **UART** на DevKit (мост USB-UART CP2102N / CH343, `10c4:ea60` / `1a86:55d3`) как ZRHP не определяется никогда:
+  образы для USB-Serial-JTAG там не говорят на ZRHP, а эти ID мостов общие с Sonoff, SMLIGHT и другими донглами
+  (обычное автоопределение может даже принять голый CP2102N за `zstack`).
+- Плата Thread Border Router (UART, раздел 9) не определяется автоматически: укажите `adapter: zrhp`, `baudrate` и
+  `rtscts`.
+- Явные `adapter: zrhp` и `port` — всегда самый надёжный вариант (нужен форк или строка для схемы выше).
 
 ### Способ A — Docker (хост на Linux)
 
@@ -152,13 +227,13 @@ docker run -d --name z2m-zrhp --restart unless-stopped \
 docker logs -f z2m-zrhp
 ```
 
-Docker Desktop на macOS/Windows не умеет пробрасывать USB-устройства в контейнеры: там используйте способ B.
+Docker Desktop на macOS/Windows не умеет пробрасывать USB-устройства в контейнеры: там используйте способ W.
 
 `--device` определяется при старте контейнера. Если NCP перезагрузится, пока контейнер работает (кнопка RESET,
 esptool), его USB-устройство пересоздаётся и контейнер может его потерять; тогда Zigbee2MQTT остановится примерно через
 20 с, и `--restart unless-stopped` запустит его снова уже с новым устройством.
 
-### Способ B — локальная сборка (Linux, macOS; Windows через Git Bash или WSL)
+### Способ B — скрипт сборки на обычной копии (Linux, macOS; Windows через Git Bash или WSL)
 
 Нужны git, Node.js 22 или 24 (corepack входит в комплект) и компилятор C/C++ для модуля последовательного порта:
 
@@ -178,10 +253,11 @@ ZIGBEE2MQTT_DATA=~/z2m-zrhp-test/data node index.js
 
 ### Проверка NCP перед запуском Zigbee2MQTT
 
-В обеих сборках есть маленькая проверка только на чтение (сначала остановите Zigbee2MQTT — порт может занимать только
+Во всех сборках есть маленькая проверка только на чтение (сначала остановите Zigbee2MQTT — порт может занимать только
 одна программа):
 
 ```bash
+cd C:\z2m-zrhp && node scripts/zrhp-probe.js COM7                                              # способ W (Windows)
 cd ~/z2m-zrhp && node .zrhp/probe.js "$PORT"                                                    # способ B
 docker run --rm --device "$PORT":/dev/ttyZRHP zigbee2mqtt-zrhp node .zrhp/probe.js /dev/ttyZRHP   # способ A
 ```
@@ -204,8 +280,8 @@ mqtt:
     # user: …
     # password: …
 serial:
-    port: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00 # Docker: /dev/ttyZRHP
-    adapter: zrhp
+    port: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00 # Windows: COM7; Docker: /dev/ttyZRHP
+    adapter: zrhp # нужен форк Zigbee2MQTT (или строка для схемы из раздела 4); можно не указывать, см. «Автоопределение»
     # baudrate / rtscts: через USB-Serial-JTAG не нужны (игнорируются)
 advanced:
     channel: 20 # канал, которого НЕТ в рабочей сети
@@ -283,10 +359,11 @@ Zigbee2MQTT started!
 
 - логи: `data/log/<дата>/log.log` каждой сессии (`log_level: debug`) или `docker logs z2m-zrhp > z2m.log 2>&1`;
 - `data/coordinator_backup.json`, `data/zrhp_store.jsonl`, `data/database.db`, `data/configuration.yaml`;
-- вывод проверки (`node .zrhp/probe.js …`, Zigbee2MQTT остановлен) до и после тестов;
+- вывод проверки (`node scripts/zrhp-probe.js …` или `node .zrhp/probe.js …`, Zigbee2MQTT остановлен) до и после
+  тестов;
 - `FLASHING.txt` использованного образа, вывод esptool (в нём ревизия чипа, например
   `Chip is ESP32-H2 (revision v0.1)`), модель DevKit;
-- `ls -l /dev/serial/by-id/` (Linux), ОС, Docker или локальная сборка;
+- `ls -l /dev/serial/by-id/` (Linux), ОС, способ установки (W, A или B), версию `zigbee-herdsman` из лога;
 - свои заметки по каждому шагу и модели устройств.
 
 ## 8. Откат
@@ -294,8 +371,8 @@ Zigbee2MQTT started!
 Пока вы соблюдали правила безопасности, рабочая установка не тронута: у неё свой координатор, своя папка `data` и свой
 контейнер. Чтобы закончить тест:
 
-1. Остановите и удалите тестовый экземпляр: `docker rm -f z2m-zrhp` (способ A) или остановите `node index.js`
-   (способ B).
+1. Остановите и удалите тестовый экземпляр: `docker rm -f z2m-zrhp` (способ A) или остановите `pnpm start` /
+   `node index.js` (Ctrl+C, способы W и B) и удалите папки `C:\z2m-zrhp` и `C:\z2m-zrhp-data`.
 2. Сбросьте тестовые устройства к заводским настройкам и сопрягите их обратно с рабочим Zigbee2MQTT.
 3. По желанию очистите DevKit: `esptool --chip esp32h2 --port "$PORT" erase-flash` (после этого можно прошить любую
    другую прошивку).
