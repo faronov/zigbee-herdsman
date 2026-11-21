@@ -58,42 +58,35 @@ Debian/Ubuntu, `uucp` в Arch).
 
 ## 2. Где взять прошивку NCP
 
-Образы собирает GitHub Actions в faronov/zigbee-rs (workflow «NCP release artifacts»):
+**Проще всего — веб-прошивальщик:** <https://faronov.github.io/zigbee-rs/flasher/> (Chrome или Edge на компьютере;
+Firefox и Safari не умеют Web Serial).
 
-1. Откройте <https://github.com/faronov/zigbee-rs/actions/workflows/ncp-release-artifacts.yml?query=branch%3Amaster+is%3Asuccess>
-   (только зелёные запуски на `master`, новые сверху; для скачивания артефактов нужно войти в GitHub).
-2. Откройте последний зелёный (✓) запуск **«NCP release artifacts»** на ветке **`master`** (zigbee-rs `c18875b` или
-   новее: смена канала, группы координатора и карта сети; коммит указан в `FLASHING.txt`) и скачайте артефакт
-   **`zrhp-ncp-images`** (или только `zrhp-ncp-h2-usj` / `zrhp-ncp-c6-usj`). Распакуйте.
+1. Выберите плату: **ESP32-H2 DevKit: ZRHP NCP** (основной вариант) или **ESP32-C6 DevKit: ZRHP NCP**.
+2. Выберите версию — по умолчанию отмечена последняя стабильная (`recommended`). На странице видны дата, коммит,
+   `build_id`, ссылка на описание изменений и SHA-256 каждого файла.
+3. Галочка **«Erase the whole chip first»**:
+   - **первая установка** (на плате другая прошивка или вы хотите начать с нуля) — **поставьте**: чип будет полностью
+     стёрт;
+   - **обновление** NCP, на котором уже есть тестовая сеть, — **не ставьте**: прошивальщик запишет только загрузчик,
+     таблицу разделов, пустой `otadata` и приложение, раздел `zbnv` (сеть, ключи, устройства) останется. В следующем
+     окне ESP Web Tools («Erase device?») галочку тоже не ставьте.
+4. Подключите разъём **USB** DevKit (не UART), нажмите **Install** и выберите порт («USB JTAG/serial debug unit»).
+   Если порт не находится: зажмите **BOOT**, нажмите и отпустите **RESET**, отпустите **BOOT**, повторите.
 
-В папке каждого образа:
+Прошивальщик сам проверяет, что чип совпадает с выбранной платой. Все образы берутся из GitHub-релизов
+<https://github.com/faronov/zigbee-rs/releases> (теги `ncp-v…`), а не из артефактов CI, поэтому у всех тестирующих
+одна и та же сборка. В логах и отчётах указывайте версию (например `ncp-v0.1.0`).
 
-| Файл                                    | Адрес во флеше | Что это                                                                                         |
-| --------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
-| `zrhp-ncp-<target>-merged.bin`          | `0x0`          | **берите его**: полный образ 4 МБ (загрузчик + таблица разделов + приложение, остальное стёрто) |
-| `zrhp-ncp-<target>-bootloader.bin`      | `0x0`          | загрузчик второй стадии (загрузчик ESP-IDF из комплекта espflash)                               |
-| `zrhp-ncp-<target>-partition-table.bin` | `0x8000`       | таблица разделов (`esp32h2-ncp-4mb`: два слота приложения и хранилище Zigbee `zbnv`)            |
-| `zrhp-ncp-<target>-app.bin`             | `0x10000`      | приложение NCP (слот `ota_0`)                                                                   |
-| `FLASHING.txt`, `SHA256SUMS`            |                | коммит zigbee-rs и фичи сборки; контрольные суммы                                               |
-
-Проверьте скачанное: `sha256sum -c SHA256SUMS` (macOS: `shasum -a 256 -c SHA256SUMS`).
-
-<details>
-<summary>Собрать образы самому</summary>
-
-```bash
-rustup toolchain install nightly-2026-08-01 --component rust-src --target riscv32imac-unknown-none-elf
-cargo install espflash@4.5.0
-git clone https://github.com/faronov/zigbee-rs && cd zigbee-rs/examples/esp32-ncp
-# ESP32-H2 (фичи по умолчанию esp32h2,transport-usj); для C6 добавьте: --no-default-features --features esp32c6,transport-usj
-cargo +nightly-2026-08-01 build --release --locked --bin esp32-ncp -Z build-std=core,alloc
-espflash save-image --chip esp32h2 --flash-size 4mb --merge \
-  --partition-table ../../products/esp32-zigbee-ncp/partitions/esp32h2-ncp-4mb.csv --target-app-partition ota_0 \
-  target/riscv32imac-unknown-none-elf/release/esp32-ncp zrhp-ncp-h2-usj-merged.bin
-```
-</details>
+**Без браузера (esptool).** На странице релиза те же файлы: `zrhp-ncp-<плата>-<версия>-merged.bin` (полный образ
+4 МБ, пишется по адресу `0x0` и стирает сеть), отдельные части и `SHA256SUMS`; команды esptool — в описании релиза.
+Берите esptool v5 (`write-flash`; в v4 — `write_flash`) и файлы одного релиза, не смешивая с образами из старых
+инструкций.
 
 ## 3. Прошивка через esptool
+
+Нужно только без веб-прошивальщика. Скачайте файлы одного релиза (например `ncp-v0.1.0`) с
+<https://github.com/faronov/zigbee-rs/releases> и проверьте их: `sha256sum -c SHA256SUMS --ignore-missing` (macOS:
+`shasum -a 256 -c SHA256SUMS --ignore-missing`).
 
 Установите esptool (команды ниже для v5; в esptool v4 они называются `esptool.py … write_flash` / `erase_flash`):
 
@@ -107,11 +100,11 @@ python3 -m pip install --upgrade esptool
 # ESP32-H2 (основной)
 PORT=/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00
 esptool --chip esp32h2 --port "$PORT" erase-flash
-esptool --chip esp32h2 --port "$PORT" write-flash 0x0 zrhp-ncp-h2-usj/zrhp-ncp-h2-usj-merged.bin
+esptool --chip esp32h2 --port "$PORT" write-flash 0x0 zrhp-ncp-h2-usj-0.1.0-merged.bin
 
 # ESP32-C6 (второй)
 esptool --chip esp32c6 --port "$PORT" erase-flash
-esptool --chip esp32c6 --port "$PORT" write-flash 0x0 zrhp-ncp-c6-usj/zrhp-ncp-c6-usj-merged.bin
+esptool --chip esp32c6 --port "$PORT" write-flash 0x0 zrhp-ncp-c6-usj-0.1.0-merged.bin
 ```
 
 macOS: `PORT=/dev/cu.usbmodemNNNN`; Windows: `--port COM5`.
@@ -121,8 +114,14 @@ macOS: `PORT=/dev/cu.usbmodemNNNN`; Windows: `--port COM5`.
 - После прошивки esptool перезагружает чип («Hard resetting via RTS pin»). Дальше NCP ничего читаемого в порт не пишет:
   он говорит по двоичному протоколу ZRHP и отвечает только хосту. Так и должно быть.
 - Полный образ (и `erase-flash`) даёт NCP **как с завода**: сохранённая на чипе сеть стирается. Чтобы позже обновить
-  прошивку и _сохранить_ тестовую сеть, пишите только приложение:
-  `esptool --chip esp32h2 --port "$PORT" write-flash 0x10000 zrhp-ncp-h2-usj-app.bin`.
+  прошивку и _сохранить_ тестовую сеть, пишите части без `zbnv` (как веб-прошивальщик без стирания; пустой `otadata`
+  нужен, чтобы загрузилось новое приложение в `ota_0`):
+
+  ```bash
+  esptool --chip esp32h2 --port "$PORT" write-flash 0x0 zrhp-ncp-h2-usj-0.1.0-bootloader.bin \
+    0x8000 zrhp-ncp-h2-usj-0.1.0-partition-table.bin 0x9000 zrhp-ncp-h2-usj-0.1.0-otadata-blank.bin \
+    0x10000 zrhp-ncp-h2-usj-0.1.0-app.bin
+  ```
 
 ## 4. Установка Zigbee2MQTT с адаптером ZRHP
 
@@ -332,7 +331,7 @@ Zigbee2MQTT started!
 7. **Бэкап**: остановите Zigbee2MQTT (он пишет бэкап координатора при каждой остановке) и проверьте, что в
    `data/coordinator_backup.json` есть `"zigbee_rs"` внутри `stack_specific`.
 8. **Восстановление на чистый NCP** (самое важное): при остановленном Zigbee2MQTT сделайте `erase-flash` и снова
-   прошейте полный образ (раздел 3), затем запустите Zigbee2MQTT с той же папкой `data`. Ожидается: `Started restored`,
+   прошейте полный образ (раздел 3; в веб-прошивальщике — с «Erase the whole chip first»), затем запустите Zigbee2MQTT с той же папкой `data`. Ожидается: `Started restored`,
    и устройства продолжают работать **без повторного сопряжения** (спящим датчикам может понадобиться минута или нажатие
    кнопки).
 9. **Карта сети**: должны быть видны связи координатора с его прямыми соседями и детьми (с LQI).
@@ -346,9 +345,9 @@ Zigbee2MQTT started!
 
 ### Известные ограничения этой тестовой сборки
 
-- Прошивка старше master zigbee-rs `c18875b` (например, запуски на ветке `ncp-release-artifacts`) не умеет менять
-  канал (адаптер откажет с понятной ошибкой), не показывает связи координатора на карте сети и не хранит группы
-  координатора. Берите образ из `master`.
+- Берите релиз `ncp-v0.1.0` или новее. Старые тестовые образы (артефакты CI ветки `ncp-release-artifacts`) не умеют
+  менять канал (адаптер откажет с понятной ошибкой), не показывают связи координатора на карте сети и не хранят группы
+  координатора.
 - Мощность передатчика пока не настраивается (`transmit_power` NCP игнорирует).
 - Нет Touchlink / inter-PAN.
 - Install codes и Green Power в адаптере реализованы, но на железе не проверены.
@@ -361,7 +360,7 @@ Zigbee2MQTT started!
 - `data/coordinator_backup.json`, `data/zrhp_store.jsonl`, `data/database.db`, `data/configuration.yaml`;
 - вывод проверки (`node scripts/zrhp-probe.js …` или `node .zrhp/probe.js …`, Zigbee2MQTT остановлен) до и после
   тестов;
-- `FLASHING.txt` использованного образа, вывод esptool (в нём ревизия чипа, например
+- версию прошитого релиза NCP (например `ncp-v0.1.0`), вывод прошивальщика или esptool (в нём ревизия чипа, например
   `Chip is ESP32-H2 (revision v0.1)`), модель DevKit;
 - `ls -l /dev/serial/by-id/` (Linux), ОС, способ установки (W, A или B), версию `zigbee-herdsman` из лога;
 - свои заметки по каждому шагу и модели устройств.
@@ -387,7 +386,7 @@ USB-моста (`tbr-bridge` из zigbee-rs-hub), поэтому это для �
 нужен.
 
 - Образ: `zrhp-ncp-h2-br` (фичи `esp32h2,transport-uart,thread-br-h2,rtscts-reserved-lines`), прошивается через
-  USB-C порт **H2** на плате: `esptool --chip esp32h2 --port <порт H2> write-flash 0x0 zrhp-ncp-h2-br-merged.bin`.
+  USB-C порт **H2** на плате: `esptool --chip esp32h2 --port <порт H2> write-flash 0x0 zrhp-ncp-h2-br-0.1.0-merged.bin`.
 - Zigbee2MQTT с портом моста S3:
 
   ```yaml
