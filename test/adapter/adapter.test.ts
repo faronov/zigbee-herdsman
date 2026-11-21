@@ -13,16 +13,21 @@ import {ZStackAdapter} from "../../src/adapter/z-stack/adapter/zStackAdapter";
 import {ZBOSSAdapter} from "../../src/adapter/zboss/adapter/zbossAdapter";
 import {ZiGateAdapter} from "../../src/adapter/zigate/adapter/zigateAdapter";
 import {ZoHAdapter} from "../../src/adapter/zoh/adapter/zohAdapter";
+import {ZrhpAdapter} from "../../src/adapter/zrhp/adapter/zrhpAdapter";
 import {
     DECONZ_CONBEE_II,
     EMBER_SKYCONNECT,
     EMBER_ZBDONGLE_E,
     EMBER_ZBDONGLE_E_CP,
     EMBER_ZBDONGLE_E_WIN,
+    ESP_DEVKIT_UART_CP2102N,
     ZBOSS_NORDIC,
     ZBT_1_PNPID,
     ZBT_2,
     ZIGATE_PLUSV2,
+    ZRHP_USJ_LINUX,
+    ZRHP_USJ_MACOS,
+    ZRHP_USJ_WIN,
     ZSTACK_CC2538,
     ZSTACK_SMLIGHT_SLZB_06P10,
     ZSTACK_SMLIGHT_SLZB_07,
@@ -565,6 +570,45 @@ describe("Adapter", () => {
         });
 
         describe("without config", () => {
+            it("detects a zigbee-rs NCP (ZRHP) on an Espressif USB-Serial-JTAG port, not on the DevKit's UART bridge", async () => {
+                listSpy.mockReturnValueOnce([ESP_DEVKIT_UART_CP2102N, ZRHP_USJ_LINUX]);
+
+                let adapter = await Adapter.create({panID: 0x1a62, channelList: [11]}, {}, "test.db.backup", {disableLED: false});
+
+                expect(adapter).toBeInstanceOf(ZrhpAdapter);
+                expect(adapter.transport.options).toStrictEqual({path: ZRHP_USJ_LINUX.path, adapter: "zrhp"});
+
+                listSpy.mockReturnValueOnce([ZRHP_USJ_MACOS]);
+
+                adapter = await Adapter.create({panID: 0x1a62, channelList: [11]}, {}, "test.db.backup", {disableLED: false});
+
+                expect(adapter.transport.options).toStrictEqual({path: ZRHP_USJ_MACOS.path, adapter: "zrhp"});
+
+                // Windows: VID/PID only
+                mockPlatform.mockReturnValueOnce("win32");
+                listSpy.mockReturnValueOnce([ZRHP_USJ_WIN]);
+
+                adapter = await Adapter.create({panID: 0x1a62, channelList: [11]}, {path: "COM7"}, "test.db.backup", {disableLED: false});
+
+                expect(adapter.transport.options).toStrictEqual({path: "COM7", adapter: "zrhp"});
+
+                // only the UART bridge: never ZRHP (a generic CP2102N is guessed as another adapter type by the existing fingerprints)
+                listSpy.mockReturnValueOnce([ESP_DEVKIT_UART_CP2102N]);
+
+                adapter = await Adapter.create({panID: 0x1a62, channelList: [11]}, {}, "test.db.backup", {disableLED: false});
+
+                expect(adapter).not.toBeInstanceOf(ZrhpAdapter);
+
+                // explicit adapter + path: matched (no transport options to add)
+                listSpy.mockReturnValueOnce([ZRHP_USJ_LINUX]);
+
+                adapter = await Adapter.create({panID: 0x1a62, channelList: [11]}, {adapter: "zrhp", path: ZRHP_USJ_LINUX.path}, "test.db.backup", {
+                    disableLED: false,
+                });
+
+                expect(adapter.transport.options).toStrictEqual({path: ZRHP_USJ_LINUX.path, adapter: "zrhp"});
+            });
+
             it("detects each adapter", async () => {
                 listSpy.mockReturnValueOnce([DECONZ_CONBEE_II]);
 

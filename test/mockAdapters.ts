@@ -79,6 +79,37 @@ export const ZBT_2 = {
     productId: "4001",
     manufacturer: "Nabu Casa",
 };
+/** zigbee-rs NCP (ZRHP) on an ESP32-H2/C6 DevKit's native USB-Serial-JTAG port, as listed on Linux */
+export const ZRHP_USJ_LINUX = {
+    path: "/dev/ttyACM0",
+    pnpId: "usb-Espressif_USB_JTAG_serial_debug_unit_60:55:F9:F7:6F:E4-if00",
+    vendorId: "303a",
+    productId: "1001",
+    manufacturer: "Espressif",
+};
+/** the same on macOS */
+export const ZRHP_USJ_MACOS = {
+    path: "/dev/tty.usbmodem1101",
+    vendorId: "303a",
+    productId: "1001",
+    manufacturer: "Espressif",
+};
+/** the same on Windows (usbser driver: no manufacturer, no path hint) */
+export const ZRHP_USJ_WIN = {
+    path: "COM7",
+    pnpId: "USB\\VID_303A&PID_1001&MI_00\\6&2A6B4D3E&0&0000",
+    vendorId: "303A",
+    productId: "1001",
+    manufacturer: "Microsoft",
+};
+/** the DevKit's other USB-C port ("UART", CP2102N bridge to UART0): not a ZRHP port with the USB-Serial-JTAG images */
+export const ESP_DEVKIT_UART_CP2102N = {
+    path: "/dev/ttyUSB0",
+    pnpId: "usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_7c2e0d0f1a2bec11a7d5b8a1b8f2b1c3-if00-port0",
+    vendorId: "10c4",
+    productId: "ea60",
+    manufacturer: "Silicon Labs",
+};
 export const ZBT_1_PNPID = {
     path: "/dev/ttyUSB0",
     pnpId: "usb-Nabu_Casa_SkyConnect_v1.0_92390c41b6d8ed11a3436b6142c613ac-if00-port0",

@@ -109,3 +109,43 @@ jobs:
               run: docker build -t zigbee2mqtt-zrhp --build-arg "HERDSMAN_REF=${{ github.sha }}" --build-arg "Z2M_REF=$Z2M_REF" -f docker/zrhp-z2m/Dockerfile .
             - name: End to end (Docker image)
               run: bash scripts/zrhp/e2e-z2m-sim.sh docker:zigbee2mqtt-zrhp "$RUNNER_TEMP/ncp-sim/ncp_sim"
+
+    package:
+        # A built npm tarball of every green push to `zrhp`, as a GitHub release asset (immutable, so lockfiles of
+        # faronov/zigbee2mqtt branch `zrhp` can pin it): v<version>-zrhp.<run number>.
+        name: Package (release asset for the Zigbee2MQTT fork)
+        needs: [test, z2m-e2e]
+        if: github.event_name == 'push' && github.ref == 'refs/heads/zrhp'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/checkout@v7
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm i --frozen-lockfile
+            - name: Version and pack
+              id: pack
+              run: |
+                  base="$(node -p 'require("./package.json").version')"
+                  version="${base}-zrhp.${GITHUB_RUN_NUMBER}"
+                  npm version --no-git-tag-version --allow-same-version "$version" >/dev/null
+                  pnpm pack --pack-destination "$RUNNER_TEMP"
+                  echo "version=$version" >>"$GITHUB_OUTPUT"
+                  echo "tgz=$RUNNER_TEMP/zigbee-herdsman-$version.tgz" >>"$GITHUB_OUTPUT"
+            - name: Check the tarball
+              run: |
+                  tar -tzf "${{ steps.pack.outputs.tgz }}" | grep -q 'package/dist/adapter/zrhp/adapter/zrhpAdapter.js'
+                  sha256sum "${{ steps.pack.outputs.tgz }}"
+            - name: Release
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  VERSION: ${{ steps.pack.outputs.version }}
+                  TGZ: ${{ steps.pack.outputs.tgz }}
+              run: |
+                  gh release create "v$VERSION" "$TGZ" --target "$GITHUB_SHA" --prerelease \
+                      --title "zigbee-herdsman $VERSION (ZRHP)" \
+                      --notes "Built from ${GITHUB_SHA} (branch zrhp). Install: \`pnpm add https://github.com/${GITHUB_REPOSITORY}/releases/download/v$VERSION/$(basename "$TGZ")\`; used by faronov/zigbee2mqtt branch zrhp."

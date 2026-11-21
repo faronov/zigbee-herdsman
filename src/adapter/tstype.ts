@@ -1,5 +1,5 @@
 export type Adapter = "deconz" | "ember" | "zstack" | "zboss" | "zigate" | "ezsp" | "zoh" | "zrhp";
-export type DiscoverableUsbAdapter = "deconz" | "ember" | "zstack" | "zboss" | "zigate";
+export type DiscoverableUsbAdapter = "deconz" | "ember" | "zstack" | "zboss" | "zigate" | "zrhp";
 
 export type UsbAdapterFingerprint = {
     vendorId: string;

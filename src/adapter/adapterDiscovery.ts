@@ -310,6 +310,19 @@ const USB_FINGERPRINTS: Record<DiscoverableUsbAdapter, UsbAdapterFingerprint[]> 
             pathRegex: ".*ZEPHYR.*",
         },
     ],
+    zrhp: [
+        {
+            // zigbee-rs NCP (ZRHP) on an Espressif chip's native USB-Serial-JTAG port (ESP32-H2 / ESP32-C6 DevKit "USB" port).
+            // VID/PID, manufacturer and product ("USB JTAG/serial debug unit") are fixed by the silicon: every ESP32-C3/C6/H2/S3
+            // firmware on that port looks the same, so `adapter: zrhp` remains the reliable setting (ZRHP spec 12.3.1 H3).
+            // Linux: /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_60:55:F9:F7:6F:E4-if00 (pnpId)
+            // macOS: /dev/cu.usbmodem1101 (manufacturer "Espressif"); Windows: COMn, usbser driver (VID/PID only)
+            vendorId: "303a",
+            productId: "1001",
+            manufacturer: "Espressif",
+            pathRegex: ".*Espressif_USB_JTAG_serial_debug_unit.*",
+        },
+    ],
     zigate: [
         {
             // ZiGate PL2303HX (blue)
@@ -468,8 +481,8 @@ function matchUsbFingerprint(
 }
 
 export async function matchUsbAdapter(adapter: Adapter, path: string): Promise<UsbAdapterFingerprint | false> {
-    // no point in matching this; `zrhp`: Espressif's shared USB-Serial-JTAG VID/PID is not a fingerprint (ZRHP spec 11.3)
-    if (adapter === "zoh" || adapter === "zrhp") {
+    // no point in matching this
+    if (adapter === "zoh") {
         return false;
     }
 
